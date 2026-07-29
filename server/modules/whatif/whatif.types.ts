@@ -38,3 +38,36 @@ export interface WhatifWork {
   likeCount: number;
   durationSeconds: number;
 }
+
+export type CharacterSourceType = 'self' | 'custom' | 'friend' | 'official';
+
+export interface CastCharacter {
+  characterId: string;
+  name: string;
+  avatarUrl: string;
+  summary: string;
+  sourceType: CharacterSourceType;
+  badges: string[];
+  selectable: boolean;
+  unavailableReason?: string;
+  authorizationStatus: 'not_required' | 'authorized' | 'pending' | 'revoked';
+  assetVersion: number;
+}
+
+export interface WorldviewOption {
+  worldviewId: string;
+  name: string;
+  coverUrl: string;
+  atmosphere: string;
+  recommended: boolean;
+  available: boolean;
+  assetVersion: number;
+}
+
+export interface CastDraftState {
+  draftId: string;
+  draftVersion: number;
+  characterIds: string[];
+  worldviewId: string | null;
+  updatedAt: string;
+}

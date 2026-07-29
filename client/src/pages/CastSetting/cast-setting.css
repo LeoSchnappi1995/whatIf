@@ -1,0 +1,561 @@
+.cast-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #eef2f3;
+}
+
+.cast-shell {
+  width: min(100%, 430px);
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 0 50px rgba(21, 40, 42, 0.08);
+}
+
+.cast-header {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: grid;
+  height: calc(58px + env(safe-area-inset-top));
+  grid-template-columns: 44px 1fr 44px;
+  align-items: end;
+  padding: env(safe-area-inset-top) 13px 8px;
+  border-bottom: 1px solid #f0f2f3;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(18px);
+}
+
+.cast-header button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid #edf0f1;
+  border-radius: 50%;
+  background: #fff;
+  color: #202425;
+}
+
+.cast-header strong {
+  align-self: center;
+  color: #151819;
+  font-size: 18px;
+  font-weight: 780;
+  text-align: center;
+  letter-spacing: -0.025em;
+}
+
+.cast-content {
+  padding: 22px 16px 134px;
+}
+
+.cast-intro {
+  padding: 4px 3px 25px;
+}
+
+.cast-intro > span {
+  color: #11aaa5;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.cast-intro h1 {
+  margin: 8px 0 8px;
+  color: #151819;
+  font-size: 27px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.045em;
+}
+
+.cast-intro p {
+  margin: 0;
+  color: #92989a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cast-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 13px;
+}
+
+.cast-section-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cast-section-heading strong {
+  color: #171a1b;
+  font-size: 16px;
+  font-weight: 780;
+}
+
+.cast-section-heading small {
+  color: #a0a5a7;
+  font-size: 10px;
+}
+
+.cast-section-heading > span {
+  flex: none;
+  padding: 5px 9px;
+  border-radius: 13px;
+  background: #e9fbfa;
+  color: #0da9a4;
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.cast-section-heading > span.single-choice {
+  background: #f3f4f5;
+  color: #9a9fa1;
+}
+
+.cast-character-scroll {
+  display: flex;
+  overflow-x: auto;
+  gap: 11px;
+  margin-right: -16px;
+  padding: 2px 16px 9px 1px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+.cast-character-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.cast-character {
+  width: 94px;
+  min-width: 94px;
+  padding: 0;
+  scroll-snap-align: start;
+  border: 0;
+  background: transparent;
+  color: #171a1b;
+  text-align: left;
+}
+
+.cast-character-image {
+  position: relative;
+  display: block;
+  width: 94px;
+  height: 126px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 18px;
+  background: #f3f5f5;
+  box-shadow: 0 5px 15px rgba(28, 39, 41, 0.08);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.cast-character-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+}
+
+.cast-character.selected .cast-character-image {
+  border-color: #21cec5;
+  box-shadow: 0 0 0 3px rgba(33, 206, 197, 0.13), 0 8px 20px rgba(20, 153, 148, 0.14);
+  transform: translateY(-1px);
+}
+
+.cast-character.disabled {
+  opacity: 0.58;
+}
+
+.cast-character.disabled .cast-character-image img {
+  filter: grayscale(0.75);
+}
+
+.cast-character-badge {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  max-width: 68px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 10px;
+  background: rgba(93, 76, 203, 0.9);
+  color: #fff;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+}
+
+.badge-self {
+  background: rgba(16, 174, 168, 0.92);
+}
+
+.badge-friend {
+  background: rgba(238, 154, 43, 0.92);
+}
+
+.badge-custom {
+  background: rgba(104, 86, 205, 0.92);
+}
+
+.cast-character-check {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  transform: scale(0.75);
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(41, 48, 49, 0.52);
+  color: #fff;
+  opacity: 0;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.cast-character.selected .cast-character-check,
+.cast-character.disabled .cast-character-check {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.cast-character.selected .cast-character-check {
+  background: #21cec5;
+}
+
+.cast-character > strong {
+  display: block;
+  overflow: hidden;
+  margin: 8px 3px 2px;
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cast-character > small {
+  display: block;
+  overflow: hidden;
+  margin: 0 3px;
+  color: #9a9fa1;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cast-add-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cast-add-actions button {
+  display: flex;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed #cfd5d6;
+  border-radius: 22px;
+  background: #fafbfb;
+  color: #0daca6;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.cast-add-actions button.invite {
+  border: 1px solid #ded9f7;
+  background: #f7f5ff;
+  color: #6957ca;
+}
+
+.cast-divider {
+  height: 1px;
+  margin: 23px 0 21px;
+  background: #eef1f2;
+}
+
+.cast-world-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+
+.cast-worldview {
+  position: relative;
+  height: 126px;
+  overflow: hidden;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 17px;
+  background: #182021;
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(22, 33, 35, 0.11);
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.cast-worldview > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cast-worldview-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 13, 16, 0.04) 24%, rgba(8, 12, 14, 0.83) 100%);
+}
+
+.cast-worldview.selected {
+  border-color: #21cec5;
+  box-shadow: 0 0 0 3px rgba(33, 206, 197, 0.12), 0 10px 22px rgba(13, 145, 140, 0.15);
+  transform: translateY(-1px);
+}
+
+.cast-recommended {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 3px 7px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #119f9b;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.cast-worldview-copy {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cast-worldview-copy strong {
+  font-size: 14px;
+  font-weight: 780;
+}
+
+.cast-worldview-copy small {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cast-worldview-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  transform: scale(0.72);
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.84);
+  border-radius: 50%;
+  background: #21cec5;
+  opacity: 0;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.cast-worldview.selected .cast-worldview-check {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.cast-footer {
+  position: fixed;
+  z-index: 30;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: min(100%, 430px);
+  margin: auto;
+  padding: 10px 16px calc(17px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(232, 236, 237, 0.92);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(20px);
+}
+
+.cast-save-state {
+  display: flex;
+  height: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #8e9597;
+  font-size: 9px;
+  opacity: 0;
+  transition: height 160ms ease, opacity 160ms ease;
+}
+
+.cast-save-state.visible {
+  height: 18px;
+  opacity: 1;
+}
+
+.cast-next {
+  display: flex;
+  width: 100%;
+  height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 25px;
+  background: linear-gradient(135deg, #28d7ce 0%, #0eb9b4 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 780;
+  box-shadow: 0 10px 22px rgba(16, 185, 179, 0.22);
+}
+
+.cast-next:disabled {
+  background: #e9ecec;
+  color: #b9bebe;
+  box-shadow: none;
+}
+
+.cast-error-page {
+  display: grid;
+  place-items: center;
+}
+
+.cast-error-state {
+  width: min(calc(100% - 40px), 350px);
+  padding: 32px 24px;
+  border: 1px solid #e6eaeb;
+  border-radius: 24px;
+  background: #fff;
+  color: #777f81;
+  text-align: center;
+  box-shadow: 0 18px 40px rgba(26, 43, 45, 0.08);
+}
+
+.cast-error-state h1 {
+  margin: 11px 0 6px;
+  color: #202425;
+  font-size: 20px;
+}
+
+.cast-error-state p {
+  margin: 0 0 18px;
+  font-size: 12px;
+}
+
+.cast-error-state button {
+  display: inline-flex;
+  height: 40px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 17px;
+  border: 0;
+  border-radius: 20px;
+  background: #20c9c1;
+  color: #fff;
+  font-weight: 700;
+}
+
+.cast-skeleton {
+  padding: 20px 16px;
+}
+
+.cast-skeleton-header,
+.cast-skeleton-line,
+.cast-skeleton-role,
+.cast-skeleton-actions i,
+.cast-skeleton-worlds div {
+  border-radius: 14px;
+  background: linear-gradient(90deg, #f0f2f2 25%, #fafbfb 40%, #f0f2f2 65%);
+  background-size: 400% 100%;
+  animation: cast-shimmer 1.4s ease infinite;
+}
+
+.cast-skeleton-header {
+  height: 42px;
+  margin-bottom: 35px;
+}
+
+.cast-skeleton-line {
+  height: 15px;
+  margin-bottom: 10px;
+}
+
+.cast-skeleton-line.wide {
+  width: 76%;
+  height: 28px;
+}
+
+.cast-skeleton-line.short {
+  width: 48%;
+  margin-bottom: 28px;
+}
+
+.cast-skeleton-line.medium {
+  width: 35%;
+  margin: 30px 0 14px;
+}
+
+.cast-skeleton-roles {
+  display: flex;
+  overflow: hidden;
+  gap: 11px;
+}
+
+.cast-skeleton-role {
+  width: 94px;
+  min-width: 94px;
+  height: 154px;
+}
+
+.cast-skeleton-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.cast-skeleton-actions i {
+  height: 44px;
+}
+
+.cast-skeleton-worlds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+
+.cast-skeleton-worlds div {
+  height: 126px;
+}
+
+@keyframes cast-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+
+@media (max-width: 430px) {
+  .cast-shell {
+    box-shadow: none;
+  }
+}

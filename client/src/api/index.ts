@@ -6,6 +6,11 @@ import type {
   WhatifHomeResponse,
   WhatifWorksResponse,
 } from '@/pages/WhatifHome/types';
+import type {
+  CastSettingResponse,
+  UpdateCastSettingInput,
+  UpdateCastSettingResponse,
+} from '@/pages/CastSetting/types';
 
 export async function getWhatifHome(): Promise<WhatifHomeResponse> {
   try {
@@ -50,6 +55,36 @@ export async function createStoryDraft(input?: {
     return response.data as CreateStoryDraftResponse;
   } catch (error) {
     logger.error('创建故事草稿失败', error);
+    throw error;
+  }
+}
+
+export async function getCastSetting(draftId: string): Promise<CastSettingResponse> {
+  try {
+    const response = await axiosForBackend({
+      url: `/api/story-drafts/${draftId}/cast-setting`,
+      method: 'GET',
+    });
+    return response.data as CastSettingResponse;
+  } catch (error) {
+    logger.error('获取角色与世界观失败', error);
+    throw error;
+  }
+}
+
+export async function updateCastSetting(
+  draftId: string,
+  input: UpdateCastSettingInput,
+): Promise<UpdateCastSettingResponse> {
+  try {
+    const response = await axiosForBackend({
+      url: `/api/story-drafts/${draftId}/cast-setting`,
+      method: 'PUT',
+      data: input,
+    });
+    return response.data as UpdateCastSettingResponse;
+  } catch (error) {
+    logger.error('保存角色与世界观失败', error);
     throw error;
   }
 }

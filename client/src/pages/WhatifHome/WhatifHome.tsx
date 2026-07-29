@@ -13,6 +13,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
 
 import { createStoryDraft, getWhatifHome, getWhatifWorks } from '@/api';
 
@@ -247,6 +248,7 @@ function HomeSkeleton() {
 }
 
 export default function WhatifHome() {
+  const navigate = useNavigate();
   const [data, setData] = useState<WhatifHomeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -303,9 +305,7 @@ export default function WhatifHome() {
         source: workId ? 'work_remake' : 'home_create',
         workId,
       });
-      toast.success('故事草稿已创建', {
-        description: `下一步进入故事设定 · ${draft.draftId.slice(-6)}`,
-      });
+      navigate(`/story-drafts/${draft.draftId}/cast`);
     } catch (createError) {
       toast.error(getErrorMessage(createError) ?? '创建失败，请重试');
     } finally {
@@ -485,7 +485,7 @@ export default function WhatifHome() {
           <div>
             <LoaderCircle className="spin" size={22} />
             <strong>正在创建故事草稿</strong>
-            <span>即将进入世界观与角色设定</span>
+            <span>即将进入人物与世界观选择</span>
           </div>
         </div>
       )}

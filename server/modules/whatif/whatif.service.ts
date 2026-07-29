@@ -1,7 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
-import type { HomeStatusCard, WhatifWork } from './whatif.types';
+import type {
+  CastCharacter,
+  CastDraftState,
+  HomeStatusCard,
+  WhatifWork,
+  WorldviewOption,
+} from './whatif.types';
 
 // Use a path relative to the app base so assets work both locally and under
 // Miaoda's `/app/{app_id}/` runtime prefix.
@@ -130,6 +136,115 @@ const works: WhatifWork[] = [
   },
 ];
 
+const castCharacters: CastCharacter[] = [
+  {
+    characterId: 'self-linxia',
+    name: '林夏',
+    avatarUrl: `${ASSET_BASE}/self.jpg`,
+    summary: '温柔真诚 · 故事里的我',
+    sourceType: 'self',
+    badges: ['我'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 3,
+  },
+  {
+    characterId: 'official-jiangyu',
+    name: '江屿',
+    avatarUrl: `${ASSET_BASE}/jiangyu.png`,
+    summary: '温柔克制 · 都市爱情',
+    sourceType: 'official',
+    badges: ['官方', '热门'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 8,
+  },
+  {
+    characterId: 'custom-sunian',
+    name: '苏念',
+    avatarUrl: `${ASSET_BASE}/role-female-b.png`,
+    summary: '外冷内热 · 我的角色',
+    sourceType: 'custom',
+    badges: ['我的'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 2,
+  },
+  {
+    characterId: 'friend-yunzhou',
+    name: '云舟',
+    avatarUrl: `${ASSET_BASE}/role-male-b.png`,
+    summary: '可靠开朗 · 好友已授权',
+    sourceType: 'friend',
+    badges: ['好友'],
+    selectable: true,
+    authorizationStatus: 'authorized',
+    assetVersion: 1,
+  },
+  {
+    characterId: 'official-shenyan',
+    name: '沈砚',
+    avatarUrl: `${ASSET_BASE}/role-male-a.png`,
+    summary: '冷静锋利 · 未来世界',
+    sourceType: 'official',
+    badges: ['官方'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 4,
+  },
+  {
+    characterId: 'friend-pending',
+    name: '等待好友确认',
+    avatarUrl: `${ASSET_BASE}/role-female-a.png`,
+    summary: '邀请已发送 · 暂不可选择',
+    sourceType: 'friend',
+    badges: ['待确认'],
+    selectable: false,
+    unavailableReason: '好友完成角色创建并授权后才可选择',
+    authorizationStatus: 'pending',
+    assetVersion: 1,
+  },
+];
+
+const worldviews: WorldviewOption[] = [
+  {
+    worldviewId: 'modern-city',
+    name: '现代都市',
+    coverUrl: `${ASSET_BASE}/world-modern-romance.jpg`,
+    atmosphere: '霓虹雨夜与错过的重逢',
+    recommended: true,
+    available: true,
+    assetVersion: 6,
+  },
+  {
+    worldviewId: 'period-romance',
+    name: '旧时代',
+    coverUrl: `${ASSET_BASE}/world-period-romance.jpg`,
+    atmosphere: '命运岔路上的同行与告别',
+    recommended: false,
+    available: true,
+    assetVersion: 2,
+  },
+  {
+    worldviewId: 'future-parallel',
+    name: '未来平行线',
+    coverUrl: `${ASSET_BASE}/world-future.png`,
+    atmosphere: '在另一个时间节点再次相遇',
+    recommended: false,
+    available: true,
+    assetVersion: 5,
+  },
+  {
+    worldviewId: 'art-life',
+    name: '文艺人生',
+    coverUrl: `${ASSET_BASE}/world-art-story.jpg`,
+    atmosphere: '共同完成未说出口的梦想',
+    recommended: false,
+    available: true,
+    assetVersion: 3,
+  },
+];
+
 interface DemoUserState {
   pendingInvitation?: boolean;
   generationTask?: 'processing' | 'failed';
@@ -141,6 +256,8 @@ interface DemoUserState {
 
 @Injectable()
 export class WhatifService {
+  private readonly drafts = new Map<string, CastDraftState>();
+
   getHome() {
     const pageSize = 6;
     const userState: DemoUserState = { characterCount: 2 };
@@ -175,12 +292,126 @@ export class WhatifService {
   }
 
   createStoryDraft(source = 'home_create', workId?: string) {
+    const draftId = `draft_${randomUUID()}`;
+    this.drafts.set(draftId, {
+      draftId,
+      draftVersion: 1,
+      characterIds: ['self-linxia', 'official-jiangyu'],
+      worldviewId: 'modern-city',
+      updatedAt: new Date().toISOString(),
+    });
+
     return {
-      draftId: `draft_${randomUUID()}`,
-      nextPage: 'story_setting' as const,
+      draftId,
+      nextPage: 'cast_setting' as const,
       source,
       sourceWorkId: workId ?? null,
       createdAt: new Date().toISOString(),
+    };
+  }
+
+  getCastSetting(draftId: string) {
+    const draft = this.ensureDraft(draftId);
+    const selectedCharacters = castCharacters.filter((character) =>
+      draft.characterIds.includes(character.characterId),
+    );
+
+    return {
+      draftId,
+      draftVersion: draft.draftVersion,
+      maxCharacterCount: 3,
+      selectedCharacterIds: selectedCharacters.map((character) => character.characterId),
+      selectedWorldviewId: draft.worldviewId,
+      characterItems: castCharacters,
+      worldviewItems: worldviews,
+      canProceed: selectedCharacters.length > 0 && Boolean(draft.worldviewId),
+      validationMessage:
+        selectedCharacters.length === 0
+          ? '至少选择 1 个角色'
+          : draft.worldviewId
+            ? null
+            : '请选择 1 个世界观',
+      nextCursor: null,
+      hasMore: false,
+      traceId: randomUUID(),
+    };
+  }
+
+  getCharacterCandidates(draftId: string, cursor: string | undefined, requestedPageSize: number) {
+    this.ensureDraft(draftId);
+    const pageSize = Math.min(Math.max(requestedPageSize || 6, 2), 10);
+    const start = this.decodeCursor(cursor);
+    const characters = castCharacters.slice(start, start + pageSize);
+    const nextOffset = start + characters.length;
+
+    return {
+      characters,
+      nextCursor:
+        nextOffset >= castCharacters.length ? null : this.encodeCursor(nextOffset),
+      hasMore: nextOffset < castCharacters.length,
+      traceId: randomUUID(),
+    };
+  }
+
+  updateCastSetting(
+    draftId: string,
+    input: {
+      characterIds: string[];
+      worldviewId?: string | null;
+      draftVersion: number;
+      confirm?: boolean;
+    },
+  ) {
+    const draft = this.ensureDraft(draftId);
+    const uniqueCharacterIds = [...new Set(input.characterIds)];
+
+    if (uniqueCharacterIds.length > 3) {
+      throw new BadRequestException('最多选择 3 个角色，请先取消一个角色');
+    }
+
+    const validCharacterIds = uniqueCharacterIds.filter((characterId) =>
+      castCharacters.some(
+        (character) => character.characterId === characterId && character.selectable,
+      ),
+    );
+
+    if (validCharacterIds.length !== uniqueCharacterIds.length) {
+      throw new BadRequestException('部分角色当前不可使用，请重新选择');
+    }
+
+    const worldviewId = input.worldviewId ?? null;
+    const validWorldview = worldviewId
+      ? worldviews.some(
+          (worldview) => worldview.worldviewId === worldviewId && worldview.available,
+        )
+      : false;
+
+    if (worldviewId && !validWorldview) {
+      throw new BadRequestException('该世界观当前不可使用，请重新选择');
+    }
+
+    if (input.confirm && (validCharacterIds.length === 0 || !validWorldview)) {
+      throw new BadRequestException(
+        validCharacterIds.length === 0 ? '至少选择 1 个角色' : '请选择 1 个世界观',
+      );
+    }
+
+    draft.characterIds = validCharacterIds;
+    draft.worldviewId = worldviewId;
+    draft.draftVersion += 1;
+    draft.updatedAt = new Date().toISOString();
+
+    return {
+      draftId,
+      draftVersion: draft.draftVersion,
+      selectedCharacterIds: draft.characterIds,
+      selectedWorldviewId: draft.worldviewId,
+      removedCharacterIds: uniqueCharacterIds.filter(
+        (characterId) => !validCharacterIds.includes(characterId),
+      ),
+      canProceed: draft.characterIds.length > 0 && Boolean(draft.worldviewId),
+      nextPage: input.confirm ? 'scene_description' : null,
+      traceId: randomUUID(),
     };
   }
 
@@ -306,5 +537,20 @@ export class WhatifService {
     } catch {
       return 0;
     }
+  }
+
+  private ensureDraft(draftId: string) {
+    const existing = this.drafts.get(draftId);
+    if (existing) return existing;
+
+    const draft: CastDraftState = {
+      draftId,
+      draftVersion: 1,
+      characterIds: ['self-linxia', 'official-jiangyu'],
+      worldviewId: 'modern-city',
+      updatedAt: new Date().toISOString(),
+    };
+    this.drafts.set(draftId, draft);
+    return draft;
   }
 }

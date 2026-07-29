@@ -64,6 +64,6 @@ export interface WhatifWorksResponse {
 
 export interface CreateStoryDraftResponse {
   draftId: string;
-  nextPage: 'story_setting';
+  nextPage: 'cast_setting';
   createdAt: string;
 }
