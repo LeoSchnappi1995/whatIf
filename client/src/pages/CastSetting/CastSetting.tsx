@@ -27,10 +27,11 @@ import './cast-setting.css';
 function getErrorMessage(error: unknown) {
   if (typeof error === 'object' && error !== null) {
     const candidate = error as {
-      response?: { data?: { error?: { message?: string } } };
+      response?: { data?: { error?: { code?: string; message?: string; details?: string } } };
       message?: string;
     };
-    return candidate.response?.data?.error?.message ?? candidate.message;
+    const payload = candidate.response?.data?.error;
+    return payload?.message ? `${payload.message}${payload.code ? ` (${payload.code})` : ''}${payload.details ? `：${payload.details}` : ''}` : candidate.message;
   }
   return undefined;
 }
@@ -134,6 +135,7 @@ export default function CastSetting() {
   const [data, setData] = useState<CastSettingResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [worldviewId, setWorldviewId] = useState<string | null>(null);
+  const [storyTitle, setStoryTitle] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -154,6 +156,7 @@ export default function CastSetting() {
       setData(response);
       setSelectedIds(response.selectedCharacterIds);
       setWorldviewId(response.selectedWorldviewId);
+      setStoryTitle(response.storyTitle || '');
       versionRef.current = response.draftVersion;
       snapshotRef.current = {
         characterIds: response.selectedCharacterIds,
@@ -188,6 +191,7 @@ export default function CastSetting() {
           characterIds,
           worldviewId: nextWorldviewId,
           draftVersion: versionRef.current,
+          storyTitle,
           confirm,
         });
         if (sequence === saveSequenceRef.current) {
@@ -214,7 +218,7 @@ export default function CastSetting() {
         }
       }
     },
-    [draftId],
+    [draftId, storyTitle],
   );
 
   const scheduleSave = (characterIds: string[], nextWorldviewId: string | null) => {
@@ -259,12 +263,17 @@ export default function CastSetting() {
       toast('请选择 1 个世界观');
       return;
     }
+    if (!storyTitle.trim() || storyTitle.trim() === '未命名故事') {
+      toast('先给故事起一个名字');
+      return;
+    }
 
     const response = await saveSelection(selectedIds, worldviewId, true);
     if (response?.canProceed) {
       toast.success('人物与世界观已确认', {
         description: '下一步将描述这段 15 秒故事',
       });
+      navigate(`/story-drafts/${draftId}/scene/new`);
     }
   };
 
@@ -295,7 +304,7 @@ export default function CastSetting() {
           <button type="button" onClick={() => navigate(-1)} aria-label="返回">
             <ChevronLeft size={24} />
           </button>
-          <strong>选择人物</strong>
+            <strong>选择人物与世界</strong>
           <button
             type="button"
             onClick={() => toast('当前草稿会自动保存')}
@@ -310,6 +319,12 @@ export default function CastSetting() {
             <span>第 1 步 · 故事演员</span>
             <h1>这个故事里，<br />你希望谁来出演？</h1>
             <p>选好人物和世界观，下一步只要描述你想发生的故事。</p>
+          </section>
+
+          <section className="cast-story-name">
+            <label htmlFor="story-title">故事名称</label>
+            <input id="story-title" value={storyTitle} maxLength={40} onChange={(event) => setStoryTitle(event.target.value)} placeholder="给这个平行世界起个名字" />
+            <small>之后可以修改，不影响已生成的历史成片</small>
           </section>
 
           <section className="cast-section">
@@ -335,11 +350,7 @@ export default function CastSetting() {
             <div className="cast-add-actions">
               <button
                 type="button"
-                onClick={() =>
-                  toast('正在进入角色创建页', {
-                    description: '创建完成后会回到这里并默认选中',
-                  })
-                }
+                onClick={() => navigate(`/characters/new?returnTo=${encodeURIComponent(`/story-drafts/${draftId}/cast`)}`)}
               >
                 <Plus size={17} />
                 创建角色
@@ -347,11 +358,7 @@ export default function CastSetting() {
               <button
                 className="invite"
                 type="button"
-                onClick={() =>
-                  toast('正在进入好友邀请页', {
-                    description: '好友确认授权后，角色才可以选择',
-                  })
-                }
+                onClick={() => navigate(`/story-drafts/${draftId}/invite`)}
               >
                 <UserPlus size={17} />
                 邀请好友
@@ -380,6 +387,11 @@ export default function CastSetting() {
                 />
               ))}
             </div>
+            <button className="cast-create-world" type="button" onClick={() => navigate(`/worldviews/new?returnTo=${encodeURIComponent(`/story-drafts/${draftId}/cast`)}`)}>
+              <Plus size={15} />
+              新建世界观
+            </button>
+            {worldviewId && <button className="cast-create-world secondary" type="button" onClick={() => navigate(`/worldviews/${worldviewId}?returnTo=${encodeURIComponent(`/story-drafts/${draftId}/cast`)}`)}>编辑所选世界观</button>}
           </section>
         </div>
 
@@ -391,7 +403,7 @@ export default function CastSetting() {
           <button
             type="button"
             className="cast-next"
-            disabled={!canProceed || confirming}
+            disabled={!canProceed || confirming || saving}
             onClick={() => void handleNext()}
           >
             {confirming ? <LoaderCircle className="spin" size={18} /> : null}

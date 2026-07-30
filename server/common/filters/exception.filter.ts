@@ -1,78 +1,60 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
-import type { Response } from 'express';
-import { BusinessException } from '../interfaces/exception.interface';
-import { HTTP_STATUS_TO_RESPONSE_CODE_MAP, ResponseCode } from '../constants/api_response_code';
-import { ApiErrorResponse } from '../interfaces/api_response.interface';
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
+import type { Request, Response } from 'express';
 
-// 全局异常过滤器，用于捕获所有未处理的异常
+import { HTTP_STATUS_TO_RESPONSE_CODE_MAP, ResponseCode } from '../constants/api_response_code';
+import type { ApiErrorResponse } from '../interfaces/api_response.interface';
+import { BusinessException } from '../interfaces/exception.interface';
+
+function safeErrorText(value: unknown, fallback = '') {
+  return String(value || fallback)
+    .replace(/Bearer\s+[A-Za-z0-9._~+\-/=]+/gi, 'Bearer <hidden>')
+    .replace(/(["']?(?:api[_-]?key|access[_-]?token|authorization|secret)["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, '$1<hidden>')
+    .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/gi, '<data:image omitted>')
+    .slice(0, 4000);
+}
+
+function objectValue(value: unknown, key: string) {
+  if (!value || typeof value !== 'object') return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+function responseMessage(value: unknown, fallback: string) {
+  const message = objectValue(value, 'message');
+  if (Array.isArray(message)) return message.map(String).join('；');
+  return safeErrorText(message, fallback);
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
-    const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
-     
-    // 如果响应头已发送，则不处理
-    if (response.headersSent) {
-      return;
-    }
+    const context = host.switchToHttp();
+    const response = context.getResponse<Response>();
+    const request = context.getRequest<Request>();
+    if (response.headersSent) return;
 
-    let errorResponse: Omit<ApiErrorResponse, 'httpStatus'>;
+    const path = String(request?.originalUrl || request?.url || '');
+    let payload: Omit<ApiErrorResponse, 'httpStatus'>;
     let httpStatus: HttpStatus;
 
     if (exception instanceof BusinessException) {
-      // 业务异常
       httpStatus = exception.httpStatus;
-      errorResponse = {
-        error: {
-          code: exception.code,
-          message: exception.message,
-          details: exception.details,
-          fieldErrors: exception.fieldErrors,
-          timestamp: Date.now(),
-        },
-      };
+      payload = { error: { code: exception.code, message: safeErrorText(exception.message), details: exception.details ? safeErrorText(exception.details) : undefined, fieldErrors: exception.fieldErrors, timestamp: Date.now(), httpStatus, path } };
     } else if (exception instanceof HttpException) {
-      // HTTP异常
       httpStatus = exception.getStatus() as HttpStatus;
-      const exceptionResponse = exception.getResponse();
-
-      errorResponse = {
-        error: {
-          code: HTTP_STATUS_TO_RESPONSE_CODE_MAP[httpStatus],
-          message: typeof exceptionResponse === 'string' ? exceptionResponse : exception.message,
-          details: typeof exceptionResponse === 'object' ? JSON.stringify(exceptionResponse) : undefined,
-          timestamp: Date.now(),
-        },
-      };
-    } else if (
-      typeof exception === 'object' &&
-      exception !== null &&
-      (exception as { code?: unknown }).code === '22P02'
-    ) {
-      // Postgres invalid_text_representation：路径/查询参数与列类型不匹配（最常见是非法 UUID）
-      // 与「合法 UUID 但记录不存在」走同一条 not-found 语义，避免 500 噪声
+      const raw = exception.getResponse();
+      const declaredStatus = Number(objectValue(raw, 'httpStatus') || 0);
+      if (declaredStatus >= 400 && declaredStatus <= 599) httpStatus = declaredStatus;
+      const details = objectValue(raw, 'details');
+      payload = { error: { code: safeErrorText(objectValue(raw, 'code'), HTTP_STATUS_TO_RESPONSE_CODE_MAP[httpStatus]), message: typeof raw === 'string' ? safeErrorText(raw) : responseMessage(raw, exception.message), details: details ? safeErrorText(typeof details === 'string' ? details : JSON.stringify(details)) : undefined, timestamp: Date.now(), httpStatus, path } };
+    } else if (typeof exception === 'object' && exception !== null && (exception as { code?: unknown }).code === '22P02') {
       httpStatus = HttpStatus.NOT_FOUND;
-      errorResponse = {
-        error: {
-          code: ResponseCode.NOT_FOUND,
-          message: '资源不存在',
-          timestamp: Date.now(),
-        },
-      };
+      payload = { error: { code: ResponseCode.NOT_FOUND, message: '资源不存在', timestamp: Date.now(), httpStatus, path } };
     } else {
-      // 未知异常
-      httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
-      errorResponse = {
-        error: {
-          code: ResponseCode.INTERNAL_ERROR,
-          message: '服务器内部错误',
-          stack: (exception as Error).stack,
-          cause: (exception as Error).cause as string,
-          timestamp: Date.now(),
-        },
-      };
+      const declaredStatus = Number(objectValue(exception, 'httpStatus') || 0);
+      httpStatus = declaredStatus >= 400 && declaredStatus <= 599 ? declaredStatus : HttpStatus.INTERNAL_SERVER_ERROR;
+      const details = objectValue(exception, 'details');
+      payload = { error: { code: safeErrorText(objectValue(exception, 'code'), ResponseCode.INTERNAL_ERROR), message: safeErrorText(exception instanceof Error ? exception.message : exception, '服务器内部错误'), details: details ? safeErrorText(typeof details === 'string' ? details : JSON.stringify(details)) : undefined, timestamp: Date.now(), httpStatus, path } };
     }
-
-    response.status(httpStatus).json(errorResponse);
+    response.status(httpStatus).json(payload);
   }
 }

@@ -26,6 +26,8 @@ export interface WorldviewOption {
 export interface CastSettingResponse {
   draftId: string;
   draftVersion: number;
+  storyTitle: string;
+  storySetting: string;
   maxCharacterCount: number;
   selectedCharacterIds: string[];
   selectedWorldviewId: string | null;
@@ -42,6 +44,7 @@ export interface UpdateCastSettingInput {
   characterIds: string[];
   worldviewId: string | null;
   draftVersion: number;
+  storyTitle?: string;
   confirm?: boolean;
 }
 

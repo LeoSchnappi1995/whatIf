@@ -16,6 +16,9 @@ export interface ApiErrorResponse {
     cause?: string;
     /** 错误发生时间 */
     timestamp?: number;
+    /** HTTP 状态码，供前端稳定映射 */
+    httpStatus?: number;
+    /** 失败接口路径 */
+    path?: string;
   };
 }
-

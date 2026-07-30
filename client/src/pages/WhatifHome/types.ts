@@ -1,15 +1,19 @@
 export type StatusCardType =
   | 'no_character'
   | 'existing_character'
+  | 'character_default'
   | 'character_created'
   | 'pending_invitation'
   | 'video_generating'
   | 'collaboration_ready'
   | 'story_resumable'
+  | 'continuable_story'
+  | 'participated_story_new_video'
   | 'video_failed';
 
 export interface HeroContent {
   id: string;
+  workId?: string;
   title: string;
   subtitle: string;
   coverUrl: string;
@@ -34,6 +38,8 @@ export interface HomeStatusCard {
   progress?: number;
   storyId?: string;
   taskId?: string;
+  targetPage?: string;
+  targetId?: string;
   characters: CharacterSummary[];
 }
 
@@ -46,6 +52,10 @@ export interface WhatifWork {
   avatarUrl: string;
   likeCount: number;
   durationSeconds: number;
+  workId?: string;
+  videoUrl?: string;
+  canRemix?: boolean;
+  templateId?: string;
 }
 
 export interface WhatifHomeResponse {
@@ -64,6 +74,8 @@ export interface WhatifWorksResponse {
 
 export interface CreateStoryDraftResponse {
   draftId: string;
-  nextPage: 'cast_setting';
-  createdAt: string;
+  nextPage: 'cast_setting' | 'story_setting';
+  draftSource?: 'new' | 'existing';
+  createdAt?: string;
+  traceId?: string;
 }
