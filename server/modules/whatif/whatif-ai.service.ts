@@ -383,6 +383,10 @@ export class WhatifAiService {
     return String(data?.error?.message || data?.message || data?.failure_reason || data?.data?.error?.message || '');
   }
 
+  private shouldRetryWithoutReferences(message: string) {
+    return /real person|input image may contain|真人|reference_image|unsupported|not supported|image format|InvalidParameter\.UnsupportedImageFormat/i.test(message);
+  }
+
   async createVideo(input: { prompt: string; referenceImages?: string[]; copyrightSafePrompt?: string }) {
     if (!this.seedanceKey || !this.seedanceModel) {
       throw this.codedError('SEEDANCE_NOT_CONFIGURED', 'Seedance 2.0 尚未配置', 503);
@@ -412,7 +416,7 @@ export class WhatifAiService {
     let { response, data } = await submit(content);
     let inputMode = images.length ? 'reference_image' : 'text_only';
     const firstError = this.taskError(data);
-    if (!response.ok && images.length && /real person|input image may contain|真人|reference_image|unsupported/i.test(firstError)) {
+    if (!response.ok && images.length && this.shouldRetryWithoutReferences(firstError)) {
       this.logger.warn(`Seedance rejected reference input; one text-only safety retry is submitted. reason=${firstError}`);
       ({ response, data } = await submit([
         { type: 'text', text: JSON.stringify({ dynamic_caption: input.copyrightSafePrompt || input.prompt }) },

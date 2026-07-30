@@ -6,6 +6,7 @@ describe('WhatifAiService', () => {
     taskId(data: unknown): string;
     taskStatus(data: unknown): string;
     videoUrl(data: unknown): string;
+    shouldRetryWithoutReferences(message: string): boolean;
   };
 
   it('renders every dynamic prompt variable', () => {
@@ -27,5 +28,11 @@ describe('WhatifAiService', () => {
   it('finds a completed video URL in official output shapes', () => {
     const data = { output: { video_url: 'https://cdn.example.com/final.mp4' } };
     expect(service.videoUrl(data)).toBe('https://cdn.example.com/final.mp4');
+  });
+
+  it('retries text-only when Seedance rejects an image format', () => {
+    expect(service.shouldRetryWithoutReferences(
+      'The request failed because the image format is not supported by the API.',
+    )).toBe(true);
   });
 });
