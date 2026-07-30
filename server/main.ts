@@ -14,6 +14,7 @@ async function bootstrap() {
   await configureApp(app, { 
     disableSwagger: true,
   });
+  app.useStaticAssets(join(process.cwd(), 'dist/client'));
   const logger = new Logger('Bootstrap');
   const host = process.env.SERVER_HOST || 'localhost';
   const port = Number(process.env.SERVER_PORT || '3000');
