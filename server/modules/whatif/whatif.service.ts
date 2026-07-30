@@ -6,6 +6,8 @@ import {
 } from '@lark-apaas/fullstack-nestjs-core';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { extname, join } from 'node:path';
 
 import {
   whatifAuthorizationSnapshots,
@@ -122,16 +124,6 @@ export class WhatifService {
     } catch {
       return path;
     }
-  }
-
-  private absoluteAssetUrl(path?: string | null) {
-    if (!path) return '';
-    if (/^https?:\/\//.test(path) || path.startsWith('data:image')) return path;
-    const base = String(
-      process.env.WHATIF_PUBLIC_BASE_URL ||
-        'https://soulapp.feishuapp.com/app/app_17b2h3329qw',
-    ).replace(/\/$/, '');
-    return `${base}/${path.replace(/^\//, '')}`;
   }
 
   private async archiveRemote(url: string, prefix: string) {
@@ -535,16 +527,33 @@ export class WhatifService {
     return { story: { id: storyId, title: context.draft.title, setting: context.draft.setting, characterSnapshots: context.casts, worldviewSnapshot: context.worldview }, branch: { id: branchId } };
   }
 
-  private referenceUrlsFromSnapshots(characters: AnyRecord[], worldview: AnyRecord) {
-    const selected: string[] = [];
+  private async modelReference(value: unknown) {
+    const source = String(value || '').trim();
+    if (!source) return '';
+    if (/^https?:\/\//.test(source) || source.startsWith('data:image')) return source;
+    const relative = source.replace(/^\/+/, '');
+    if (!relative.startsWith(`${ASSET_BASE}/`)) return '';
+    try {
+      const buffer = await readFile(join(process.cwd(), 'dist/client', relative));
+      const mime = ({ '.png': 'image/png', '.webp': 'image/webp' } as Record<string, string>)[extname(relative).toLowerCase()] || 'image/jpeg';
+      return `data:${mime};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      this.logger.warn(`Unable to load bundled model reference ${relative}: ${error instanceof Error ? error.message : error}`);
+      return '';
+    }
+  }
+
+  private async referenceUrlsFromSnapshots(characters: AnyRecord[], worldview: AnyRecord) {
+    const selected: unknown[] = [];
     for (const [index, character] of characters.entries()) {
       const identity = character.assetViews?.identityFace || character.avatarUrl;
       const body = character.assetViews?.bodyFront;
-      if (identity) selected.push(this.absoluteAssetUrl(String(identity)));
-      if (index === 0 && body) selected.push(this.absoluteAssetUrl(String(body)));
+      if (identity) selected.push(identity);
+      if (index === 0 && body) selected.push(body);
     }
-    if (worldview?.coverUrl) selected.push(this.absoluteAssetUrl(String(worldview.coverUrl)));
-    return Array.from(new Set(selected.filter((value) => /^https?:\/\//.test(value)))).slice(0, 4);
+    if (worldview?.coverUrl) selected.push(worldview.coverUrl);
+    const references = await Promise.all(Array.from(new Set(selected.map(String))).map((value) => this.modelReference(value)));
+    return Array.from(new Set(references.filter(Boolean))).slice(0, 4);
   }
 
   private async previousScene(ownerId: string, parentSceneId?: string) {
@@ -574,7 +583,7 @@ export class WhatifService {
       await tx.update(whatifStories).set({ activeBranchId: branch.id, updatedAt: new Date() }).where(eq(whatifStories.id, story.id));
     });
     try {
-      const referenceImages = this.referenceUrlsFromSnapshots(context.casts, context.worldview);
+      const referenceImages = await this.referenceUrlsFromSnapshots(context.casts, context.worldview);
       const created = await this.ai.createVideo({ prompt: `${compilation.prompt}\nNegative constraints: ${compilation.negativePrompt}`, referenceImages, copyrightSafePrompt: `${compilation.prompt}\nAll people are original fictional adults. Use stylized cinematic animation if any identity reference is unsafe.` });
       await this.db.transaction(async (tx) => {
         await tx.update(whatifVideoTasks).set({ providerTaskId: created.providerTaskId, status: 'queued', stage: 'model_generating', progress: 22, inputMode: created.inputMode, responseSnapshot: created.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
@@ -648,7 +657,7 @@ export class WhatifService {
     }
     const [scene] = await this.db.select().from(whatifScenes).where(eq(whatifScenes.id, current.sceneId)).limit(1);
     const [story] = await this.db.select().from(whatifStories).where(eq(whatifStories.id, current.storyId)).limit(1);
-    return { taskId: current.id, sceneId: current.sceneId, storyId: current.storyId, draftId: story?.sourceDraftId, storyTitle: story?.title, sceneTitle: scene?.title, userScript: scene?.userScript, directorPlan: scene?.directorPlan, status: current.status, stage: current.stage, stageLabel: this.stageLabel(current.stage), progress: current.progress, videoUrl: await this.signed(current.videoPath), errorCode: current.errorCode, errorMessage: current.errorMessage, chargeStatus: scene?.chargeStatus, priceSob: scene?.priceSob || 15, traceId: current.traceId || this.traceId() };
+    return { taskId: current.id, sceneId: current.sceneId, storyId: current.storyId, draftId: story?.sourceDraftId, storyTitle: story?.title, sceneTitle: scene?.title, userScript: scene?.userScript, directorPlan: scene?.directorPlan, status: current.status, stage: current.stage, stageLabel: this.stageLabel(current.stage), progress: current.progress, inputMode: current.inputMode, videoUrl: await this.signed(current.videoPath), errorCode: current.errorCode, errorMessage: current.errorMessage, chargeStatus: scene?.chargeStatus, priceSob: scene?.priceSob || 15, traceId: current.traceId || this.traceId() };
   }
 
   async getVideoResult(ownerId: string, taskId: string) {
