@@ -392,34 +392,92 @@ export class WhatifAiService {
     return matched ? Number(matched[1]) : -1;
   }
 
-  async createVideo(input: { prompt: string; referenceImages?: string[]; copyrightSafePrompt?: string }) {
+  async createVideo(input: {
+    prompt: string;
+    referenceImages?: string[];
+    copyrightSafePrompt?: string;
+    traceId?: string;
+    taskId?: string;
+    sceneId?: string;
+  }) {
     if (!this.seedanceKey || !this.seedanceModel) {
       throw this.codedError('SEEDANCE_NOT_CONFIGURED', 'Seedance 2.0 尚未配置', 503);
     }
+    const traceId = input.traceId || randomUUID();
     const images = this.validImageUrls(input.referenceImages || [], 4);
-    const submit = async (content: any[]) => {
+    const attempts: Array<Record<string, unknown>> = [];
+    const endpoint = `${this.seedanceBase}/contents/generations/tasks`;
+    const requestLog = () => ({
+      traceId,
+      taskId: input.taskId,
+      sceneId: input.sceneId,
+      endpoint,
+      headers: {
+        Authorization: 'Bearer <redacted>',
+        'X-API-Key': '<redacted>',
+        'Content-Type': 'application/json',
+      },
+      attempts,
+    });
+    const submit = async (content: any[], inputMode: string) => {
+      const requestBody = {
+        model: this.seedanceModel,
+        content,
+        resolution: '720p',
+        ratio: '9:16',
+        duration: 15,
+        generate_audio: true,
+        watermark: false,
+        return_last_frame: true,
+      };
+      const attemptNumber = attempts.length + 1;
+      this.logger.log(JSON.stringify({
+        event: 'whatif.seedance.request',
+        traceId,
+        taskId: input.taskId,
+        sceneId: input.sceneId,
+        attempt: attemptNumber,
+        inputMode,
+        endpoint,
+        request: requestBody,
+      }));
       const response = await fetch(`${this.seedanceBase}/contents/generations/tasks`, {
         method: 'POST',
         headers: this.seedanceHeaders(),
-        body: JSON.stringify({
-          model: this.seedanceModel,
-          content,
-          resolution: '720p',
-          ratio: '9:16',
-          duration: 15,
-          generate_audio: true,
-          watermark: false,
-          return_last_frame: true,
-        }),
+        body: JSON.stringify(requestBody),
       });
-      const data: any = await response.json();
+      const responseText = await response.text();
+      let data: any;
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        data = { rawText: responseText };
+      }
+      attempts.push({
+        attempt: attemptNumber,
+        inputMode,
+        requestedAt: new Date().toISOString(),
+        request: requestBody,
+        httpStatus: response.status,
+        response: data,
+      });
+      this.logger.log(JSON.stringify({
+        event: 'whatif.seedance.response',
+        traceId,
+        taskId: input.taskId,
+        sceneId: input.sceneId,
+        attempt: attemptNumber,
+        inputMode,
+        httpStatus: response.status,
+        response: data,
+      }));
       return { response, data };
     };
 
     const content: any[] = [{ type: 'text', text: input.prompt }];
     images.forEach((url) => content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' }));
-    let { response, data } = await submit(content);
     let inputMode = images.length ? 'reference_image' : 'text_only';
+    let { response, data } = await submit(content, inputMode);
     const firstError = this.taskError(data);
     if (!response.ok && images.length && this.shouldRetryWithoutReferences(firstError)) {
       const rejectedIndex = this.rejectedContentIndex(firstError);
@@ -428,29 +486,35 @@ export class WhatifAiService {
         : content;
       if (filteredContent.length > 1 && filteredContent.length < content.length) {
         this.logger.warn(`Seedance rejected content[${rejectedIndex}]; retrying without that reference. reason=${firstError}`);
-        ({ response, data } = await submit(filteredContent));
         inputMode = 'reference_image_filtered';
+        ({ response, data } = await submit(filteredContent, inputMode));
       }
     }
     const referenceRetryError = this.taskError(data);
     if (!response.ok && images.length && this.shouldRetryWithoutReferences(referenceRetryError || firstError)) {
       this.logger.warn(`Seedance still rejected reference input; one text-only safety retry is submitted. reason=${referenceRetryError || firstError}`);
+      inputMode = 'text_only_safety_fallback';
       ({ response, data } = await submit([
         { type: 'text', text: JSON.stringify({ dynamic_caption: input.copyrightSafePrompt || input.prompt }) },
-      ]));
-      inputMode = 'text_only_safety_fallback';
+      ], inputMode));
     }
     if (!response.ok) {
       const message = this.taskError(data) || `Seedance 创建任务失败：${response.status}`;
-      throw new BadGatewayException({
+      const exception = new BadGatewayException({
         code: `SEEDANCE_CREATE_HTTP_${response.status}`,
         message,
         details: data,
       });
+      (exception as BadGatewayException & { requestLog?: unknown }).requestLog = requestLog();
+      throw exception;
     }
     const providerTaskId = this.taskId(data);
-    if (!providerTaskId) throw this.codedError('SEEDANCE_TASK_ID_MISSING', 'Seedance 未返回任务 ID', 502, data);
-    return { providerTaskId, status: this.taskStatus(data) || 'queued', inputMode, raw: data };
+    if (!providerTaskId) {
+      const error = this.codedError('SEEDANCE_TASK_ID_MISSING', 'Seedance 未返回任务 ID', 502, data) as CodedError & { requestLog?: unknown };
+      error.requestLog = requestLog();
+      throw error;
+    }
+    return { providerTaskId, status: this.taskStatus(data) || 'queued', inputMode, raw: data, requestLog: requestLog() };
   }
 
   async getVideoStatus(providerTaskId: string) {

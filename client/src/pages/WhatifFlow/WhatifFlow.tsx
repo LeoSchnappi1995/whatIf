@@ -240,7 +240,12 @@ export function CharacterEditorPage() {
   const kinds = ['identity-face', 'body-front', 'body-left', 'body-right', 'body-back'];
 
   return (
-    <MobilePage title={routeCharacterId ? '角色设定' : '创建角色'} eyebrow="人物永久资产" className="character-editor-page">
+    <MobilePage
+      title={routeCharacterId ? '角色设定' : '创建角色'}
+      eyebrow="人物永久资产"
+      className="character-editor-page"
+      onBack={() => navigate(returnTo, { replace: true })}
+    >
       <section className="flow-card character-basic">
         <label>角色名称<input value={name} maxLength={20} onChange={(event) => setName(event.target.value)} placeholder="给角色起个名字" /></label>
         <label>人物描写<textarea value={description} maxLength={500} onChange={(event) => setDescription(event.target.value)} placeholder="性格、经历和稳定外貌特征" /></label>
