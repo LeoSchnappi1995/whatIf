@@ -6,8 +6,6 @@ import {
 } from '@lark-apaas/fullstack-nestjs-core';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
 
 import {
   whatifAuthorizationSnapshots,
@@ -28,6 +26,10 @@ import { PROMPT_VERSIONS } from '../../prompts/whatif-prompt-registry';
 import { WhatifAiService } from './whatif-ai.service';
 
 const ASSET_BASE = 'assets/whatif';
+const MODEL_ASSET_PATHS = {
+  officialJiangyu: '/1872109747097770.png',
+  worldFuture: '/1872108341537802.png',
+} as const;
 
 const officialCharacters = [
   {
@@ -41,7 +43,7 @@ const officialCharacters = [
     selectable: true,
     authorizationStatus: 'not_required',
     assetVersion: 8,
-    assetViews: { identityFace: `${ASSET_BASE}/jiangyu.png`, bodyFront: `${ASSET_BASE}/jiangyu.png` },
+    assetViews: { identityFace: MODEL_ASSET_PATHS.officialJiangyu, bodyFront: MODEL_ASSET_PATHS.officialJiangyu },
   },
   {
     characterId: 'official-shenyan',
@@ -326,7 +328,7 @@ export class WhatifService {
       const rows = await this.db.select().from(whatifWorldviews)
         .where(and(inArray(whatifWorldviews.ownerId, ['system', ownerId]), eq(whatifWorldviews.status, 'active')))
         .orderBy(desc(whatifWorldviews.ownerId), desc(whatifWorldviews.updatedAt));
-      if (rows.length) return Promise.all(rows.map(async (row, index) => ({ worldviewId: row.id, name: row.name, coverUrl: await this.signed(row.coverPath), atmosphere: row.atmosphere, description: row.description, stylePrompt: row.stylePrompt, recommended: index === 0, available: true, assetVersion: row.currentVersion })));
+      if (rows.length) return Promise.all(rows.map(async (row, index) => ({ worldviewId: row.id, name: row.name, coverUrl: await this.signed(row.id === 'world-future-parallel' ? MODEL_ASSET_PATHS.worldFuture : row.coverPath), atmosphere: row.atmosphere, description: row.description, stylePrompt: row.stylePrompt, recommended: index === 0, available: true, assetVersion: row.currentVersion })));
     } catch (error) {
       if (!this.isMissingTable(error)) throw error;
     }
@@ -531,14 +533,12 @@ export class WhatifService {
     const source = String(value || '').trim();
     if (!source) return '';
     if (/^https?:\/\//.test(source) || source.startsWith('data:image')) return source;
-    const relative = source.replace(/^\/+/, '');
-    if (!relative.startsWith(`${ASSET_BASE}/`)) return '';
+    if (source.replace(/^\/+/, '').startsWith(`${ASSET_BASE}/`)) return '';
     try {
-      const buffer = await readFile(join(process.cwd(), 'dist/client', relative));
-      const mime = ({ '.png': 'image/png', '.webp': 'image/webp' } as Record<string, string>)[extname(relative).toLowerCase()] || 'image/jpeg';
-      return `data:${mime};base64,${buffer.toString('base64')}`;
+      const signed = await this.signed(source);
+      return /^https?:\/\//.test(signed) ? signed : '';
     } catch (error) {
-      this.logger.warn(`Unable to load bundled model reference ${relative}: ${error instanceof Error ? error.message : error}`);
+      this.logger.warn(`Unable to sign model reference ${source}: ${error instanceof Error ? error.message : error}`);
       return '';
     }
   }
