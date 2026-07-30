@@ -447,7 +447,7 @@ export class WhatifService {
     const imagePath = await this.archiveRemote(generated.imageUrl, `${characterId}-${body.kind || 'asset'}`);
     const assetId = this.id('character_asset');
     await this.db.insert(whatifCharacterAssets).values({ id: assetId, characterId, ownerId, version: character.currentVersion, kind: String(body.kind || 'identity-face'), status: 'ready', referencePaths: body.referenceImages || [], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, confirmed: false });
-    return { taskId: assetId, status: 'success', assetId, imageUrl: await this.signed(imagePath), profile, traceId: generated.traceId };
+    return { taskId: assetId, status: 'success', assetId, kind: String(body.kind || 'identity-face'), imageUrl: await this.signed(imagePath), profile, traceId: generated.traceId };
   }
 
   async confirmCharacterAssets(ownerId: string, characterId: string, body: AnyRecord) {
