@@ -433,6 +433,13 @@ export class WhatifService {
     }));
   }
 
+  private async characterCandidates(ownerId: string) {
+    const userCharacters = await this.userCharacterCandidates(ownerId);
+    const builtInCharacters = officialCharacters.filter((item) => item.characterId.startsWith('builtin-'));
+    const brandedCharacters = officialCharacters.filter((item) => !item.characterId.startsWith('builtin-'));
+    return [...builtInCharacters, ...userCharacters, ...brandedCharacters];
+  }
+
   private async worldviewOptions(ownerId: string) {
     const defaults = await Promise.all(
       fallbackWorldviews.map(async (item) => ({
@@ -462,7 +469,7 @@ export class WhatifService {
     const selected = await this.db.select().from(whatifDraftCharacters)
       .where(and(eq(whatifDraftCharacters.draftId, draftId), eq(whatifDraftCharacters.ownerId, ownerId)))
       .orderBy(whatifDraftCharacters.sortOrder);
-    const candidates = [...await this.userCharacterCandidates(ownerId), ...officialCharacters];
+    const candidates = await this.characterCandidates(ownerId);
     const worldviews = await this.worldviewOptions(ownerId);
     return {
       draftId,
@@ -491,7 +498,7 @@ export class WhatifService {
       .where(and(eq(whatifStoryDrafts.id, draftId), eq(whatifStoryDrafts.ownerId, ownerId))).limit(1);
     if (!draft) throw new NotFoundException({ code: 'DRAFT_NOT_FOUND', message: '故事草稿不存在' });
     if (Number(body.draftVersion) !== draft.version) this.fail('DRAFT_VERSION_CONFLICT', '草稿已在其他页面更新，请刷新后重试', 409);
-    const allCandidates = [...await this.userCharacterCandidates(ownerId), ...officialCharacters];
+    const allCandidates = await this.characterCandidates(ownerId);
     const chosen = ids.map((id) => allCandidates.find((item) => item.characterId === id)).filter(Boolean) as AnyRecord[];
     if (chosen.length !== ids.length || chosen.some((item) => !item.selectable)) this.fail('CHARACTER_UNAVAILABLE', '选择中包含不可用角色，请重新选择');
     const worldviews = await this.worldviewOptions(ownerId);
