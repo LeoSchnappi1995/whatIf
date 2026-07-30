@@ -587,6 +587,13 @@ export class WhatifService {
     const context = await this.draftContext(ownerId, draftId);
     const script = String(body.script || '').trim();
     if (!script) this.fail('SCENE_SCRIPT_REQUIRED', '请描述这一幕发生什么');
+    const traceId = this.traceId();
+    this.logger.log(JSON.stringify({
+      event: 'whatif.video.generate.received',
+      traceId,
+      draftId,
+      request: body,
+    }));
     const previous = await this.previousScene(ownerId, body.parentSceneId ? String(body.parentSceneId) : undefined);
     const directorPlan = body.directorPlan && Array.isArray(body.directorPlan.shots) ? body.directorPlan : await this.ai.directScene({ script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous });
     if (directorPlan.capacity?.status === 'overflow' && body.force !== true) this.fail('SCENE_CAPACITY_OVERFLOW', directorPlan.capacity.message || '这一幕超过 15 秒，请缩短或拆成两幕', 422, { suggestedScript: directorPlan.capacity.suggestedScript });
@@ -597,17 +604,48 @@ export class WhatifService {
     const sequence = scenes.length ? Math.max(...scenes.map((scene) => scene.sequence)) + 1 : Number(previous?.sequence || 0) + 1;
     const sceneId = this.id('scene');
     const taskId = this.id('video_task');
-    const traceId = this.traceId();
+    const referenceImages = await this.referenceUrlsFromSnapshots(context.casts, context.worldview);
+    const baseRequestSnapshot = {
+      httpRequest: { draftId, body },
+      resolvedInput: {
+        script,
+        story: {
+          title: context.draft.title,
+          setting: context.draft.setting,
+          relationship: context.draft.relationship,
+          worldview: context.worldview,
+        },
+        characters: context.casts,
+        previous,
+        directorPlan,
+      },
+      compilation,
+      referenceImages,
+    };
+    this.logger.log(JSON.stringify({
+      event: 'whatif.video.generate.compiled',
+      traceId,
+      taskId,
+      sceneId,
+      draftId,
+      requestSnapshot: baseRequestSnapshot,
+    }));
     await this.db.transaction(async (tx) => {
       await tx.insert(whatifScenes).values({ id: sceneId, storyId: story.id, branchId: branch.id, ownerId, parentSceneId: body.parentSceneId || scenes.at(-1)?.id || null, sequence, title: String(directorPlan.title || `第${sequence}幕`), userScript: script, directorPlan, seedancePrompt: compilation.prompt, continuitySnapshot: directorPlan.continuityOut || {}, status: 'submitting' });
-      await tx.insert(whatifVideoTasks).values({ id: taskId, sceneId, storyId: story.id, ownerId, model: this.ai.configSummary().video.model, promptVersion: compilation.promptVersion, status: 'submitting', stage: 'submitting', progress: 12, requestSnapshot: { script, directorPlan, compilation, characters: context.casts, worldview: context.worldview }, traceId });
+      await tx.insert(whatifVideoTasks).values({ id: taskId, sceneId, storyId: story.id, ownerId, model: this.ai.configSummary().video.model, promptVersion: compilation.promptVersion, status: 'submitting', stage: 'submitting', progress: 12, requestSnapshot: baseRequestSnapshot, traceId });
       await tx.update(whatifStories).set({ activeBranchId: branch.id, updatedAt: new Date() }).where(eq(whatifStories.id, story.id));
     });
     try {
-      const referenceImages = await this.referenceUrlsFromSnapshots(context.casts, context.worldview);
-      const created = await this.ai.createVideo({ prompt: `${compilation.prompt}\nNegative constraints: ${compilation.negativePrompt}`, referenceImages, copyrightSafePrompt: `${compilation.prompt}\nAll people are original fictional adults. Use stylized cinematic animation if any identity reference is unsafe.` });
+      const created = await this.ai.createVideo({
+        prompt: `${compilation.prompt}\nNegative constraints: ${compilation.negativePrompt}`,
+        referenceImages,
+        copyrightSafePrompt: `${compilation.prompt}\nAll people are original fictional adults. Use stylized cinematic animation if any identity reference is unsafe.`,
+        traceId,
+        taskId,
+        sceneId,
+      });
       await this.db.transaction(async (tx) => {
-        await tx.update(whatifVideoTasks).set({ providerTaskId: created.providerTaskId, status: 'queued', stage: 'model_generating', progress: 22, inputMode: created.inputMode, responseSnapshot: created.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
+        await tx.update(whatifVideoTasks).set({ providerTaskId: created.providerTaskId, status: 'queued', stage: 'model_generating', progress: 22, inputMode: created.inputMode, requestSnapshot: { ...baseRequestSnapshot, seedance: created.requestLog }, responseSnapshot: created.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
         await tx.update(whatifScenes).set({ status: 'generating', updatedAt: new Date() }).where(eq(whatifScenes.id, sceneId));
         await tx.update(whatifStoryDrafts).set({ latestSceneDraft: {}, updatedAt: new Date() }).where(eq(whatifStoryDrafts.id, draftId));
       });
@@ -615,8 +653,9 @@ export class WhatifService {
     } catch (error) {
       const code = String((error as { response?: { code?: unknown }; code?: unknown })?.response?.code || (error as { code?: unknown })?.code || 'VIDEO_SUBMIT_FAILED');
       const message = error instanceof Error ? error.message : '视频任务提交失败';
+      const requestLog = (error as { requestLog?: unknown })?.requestLog;
       await this.db.transaction(async (tx) => {
-        await tx.update(whatifVideoTasks).set({ status: 'failed', stage: 'failed', progress: 100, errorCode: code, errorMessage: message, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
+        await tx.update(whatifVideoTasks).set({ status: 'failed', stage: 'failed', progress: 100, requestSnapshot: requestLog ? { ...baseRequestSnapshot, seedance: requestLog } : baseRequestSnapshot, errorCode: code, errorMessage: message, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
         await tx.update(whatifScenes).set({ status: 'failed', chargeStatus: 'not_charged', updatedAt: new Date() }).where(eq(whatifScenes.id, sceneId));
       });
       throw error;
@@ -685,6 +724,47 @@ export class WhatifService {
     const result = await this.getVideoTask(ownerId, taskId);
     if (result.status !== 'success') return result;
     return { ...result, actions: ['continue', 'regenerate', 'timeline', 'publish'], traceId: this.traceId() };
+  }
+
+  private async videoTaskDebugPayload(ownerId: string, task: AnyRecord) {
+    const [scene] = await this.db.select().from(whatifScenes).where(and(eq(whatifScenes.id, task.sceneId), eq(whatifScenes.ownerId, ownerId))).limit(1);
+    const [story] = await this.db.select().from(whatifStories).where(and(eq(whatifStories.id, task.storyId), eq(whatifStories.ownerId, ownerId))).limit(1);
+    return {
+      taskId: task.id,
+      providerTaskId: task.providerTaskId,
+      traceId: task.traceId,
+      draftId: story?.sourceDraftId,
+      storyId: task.storyId,
+      sceneId: task.sceneId,
+      status: task.status,
+      stage: task.stage,
+      inputMode: task.inputMode,
+      model: task.model,
+      promptVersion: task.promptVersion,
+      requestSnapshot: task.requestSnapshot,
+      responseSnapshot: task.responseSnapshot,
+      userScript: scene?.userScript,
+      directorPlan: scene?.directorPlan,
+      seedancePrompt: scene?.seedancePrompt,
+      errorCode: task.errorCode,
+      errorMessage: task.errorMessage,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+    };
+  }
+
+  async getVideoTaskDebug(ownerId: string, taskId: string) {
+    const [task] = await this.db.select().from(whatifVideoTasks).where(and(eq(whatifVideoTasks.id, taskId), eq(whatifVideoTasks.ownerId, ownerId))).limit(1);
+    if (!task) throw new NotFoundException({ code: 'VIDEO_TASK_NOT_FOUND', message: '视频任务不存在' });
+    return this.videoTaskDebugPayload(ownerId, task);
+  }
+
+  async getLatestVideoTaskDebug(ownerId: string, draftId: string) {
+    const [story] = await this.db.select().from(whatifStories).where(and(eq(whatifStories.sourceDraftId, draftId), eq(whatifStories.ownerId, ownerId))).limit(1);
+    if (!story) throw new NotFoundException({ code: 'STORY_NOT_FOUND', message: '该草稿还没有生成过视频' });
+    const [task] = await this.db.select().from(whatifVideoTasks).where(and(eq(whatifVideoTasks.storyId, story.id), eq(whatifVideoTasks.ownerId, ownerId))).orderBy(desc(whatifVideoTasks.createdAt)).limit(1);
+    if (!task) throw new NotFoundException({ code: 'VIDEO_TASK_NOT_FOUND', message: '该草稿还没有视频任务' });
+    return this.videoTaskDebugPayload(ownerId, task);
   }
 
   async listStories(ownerId: string) {

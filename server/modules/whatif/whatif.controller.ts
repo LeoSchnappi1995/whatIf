@@ -123,6 +123,16 @@ export class WhatifController {
     return this.whatif.getVideoTask(this.owner(req), taskId);
   }
 
+  @Get('api/video-tasks/:taskId/debug')
+  getVideoTaskDebug(@Req() req: Request, @Param('taskId') taskId: string) {
+    return this.whatif.getVideoTaskDebug(this.owner(req), taskId);
+  }
+
+  @Get('api/story-drafts/:draftId/video-debug/latest')
+  getLatestVideoTaskDebug(@Req() req: Request, @Param('draftId') draftId: string) {
+    return this.whatif.getLatestVideoTaskDebug(this.owner(req), draftId);
+  }
+
   @Get('api/video-results/:taskId')
   getVideoResult(@Req() req: Request, @Param('taskId') taskId: string) {
     return this.whatif.getVideoResult(this.owner(req), taskId);
