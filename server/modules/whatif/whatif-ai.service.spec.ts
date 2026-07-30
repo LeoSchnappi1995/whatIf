@@ -7,6 +7,7 @@ describe('WhatifAiService', () => {
     taskStatus(data: unknown): string;
     videoUrl(data: unknown): string;
     shouldRetryWithoutReferences(message: string): boolean;
+    rejectedContentIndex(message: string): number;
   };
 
   it('renders every dynamic prompt variable', () => {
@@ -34,5 +35,11 @@ describe('WhatifAiService', () => {
     expect(service.shouldRetryWithoutReferences(
       'The request failed because the image format is not supported by the API.',
     )).toBe(true);
+  });
+
+  it('recognizes copyright policy violations and locates the rejected reference', () => {
+    const message = "The input image 'content[2]' may be related to copyright restrictions. PolicyViolation";
+    expect(service.shouldRetryWithoutReferences(message)).toBe(true);
+    expect(service.rejectedContentIndex(message)).toBe(2);
   });
 });

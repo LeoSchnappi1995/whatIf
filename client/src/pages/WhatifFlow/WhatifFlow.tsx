@@ -121,12 +121,12 @@ function FixedAction({ children }: { children: React.ReactNode }) {
   return <div className="flow-fixed-action">{children}</div>;
 }
 
-function AssetTile({ asset, selected, onClick }: { asset?: Json; selected?: boolean; onClick?: () => void }) {
+function AssetTile({ asset, selected, confirmed, onClick }: { asset?: Json; selected?: boolean; confirmed?: boolean; onClick?: () => void }) {
   return (
     <button className={`asset-tile ${selected ? 'selected' : ''}`} type="button" onClick={onClick}>
       {asset?.imageUrl ? <img src={mediaUrl(asset.imageUrl)} alt={asset.kind} /> : <span><ImagePlus size={22} /><small>待生成</small></span>}
       {asset?.imageUrl && <i>{asset.kind === 'identity-face' ? '身份脸' : asset.kind === 'body-front' ? '全身正面' : asset.kind === 'body-left' ? '纯左侧' : asset.kind === 'body-right' ? '纯右侧' : '完整背面'}</i>}
-      {selected && <b><Check size={12} /></b>}
+      {confirmed && <b><Check size={12} /></b>}
     </button>
   );
 }
@@ -209,14 +209,24 @@ export function CharacterEditorPage() {
 
   const finish = async () => {
     const required = assets.filter((item) => ['identity-face', 'body-front'].includes(item.kind));
-    if (required.length < 2 || required.some((item) => !confirmed.includes(item.assetId))) {
-      toast('先确认身份脸和正面全身形象');
+    const missingKind = !required.some((item) => item.kind === 'identity-face')
+      ? 'identity-face'
+      : !required.some((item) => item.kind === 'body-front')
+        ? 'body-front'
+        : '';
+    if (missingKind) {
+      setActiveKind(missingKind);
+      toast(missingKind === 'identity-face' ? '还需要先生成身份脸' : '还需要生成正面全身形象');
       return;
     }
+    const assetIds = ['identity-face', 'body-front', 'body-left', 'body-right', 'body-back']
+      .map((kind) => assets.find((item) => item.kind === kind)?.assetId)
+      .map(String)
+      .filter((id) => id && id !== 'undefined');
     setSaving(true);
     try {
       const id = await saveBasic();
-      await whatifRequest(`/api/characters/${id}/confirm-assets`, { method: 'POST', data: { assetIds: confirmed } });
+      await whatifRequest(`/api/characters/${id}/confirm-assets`, { method: 'POST', data: { assetIds } });
       toast.success('人物资产已保存');
       navigate(returnTo, { replace: true });
     } catch (error) {
@@ -251,15 +261,15 @@ export function CharacterEditorPage() {
         <div className="asset-grid">
           {kinds.map((kind) => {
             const asset = assets.find((item) => item.kind === kind);
-            return <AssetTile key={kind} asset={asset ? { ...asset, imageUrl: asset.imageUrl, kind } : { kind }} selected={activeKind === kind} onClick={() => setActiveKind(kind)} />;
+            return <AssetTile key={kind} asset={asset ? { ...asset, imageUrl: asset.imageUrl, kind } : { kind }} selected={activeKind === kind} confirmed={Boolean(asset?.confirmed) || confirmed.includes(asset?.assetId)} onClick={() => setActiveKind(kind)} />;
           })}
         </div>
         {generating && <div className="asset-generation-notice"><LoaderCircle className="spin" /><span><strong>正在生成{activeKind === 'identity-face' ? '身份脸' : activeKind === 'body-front' ? '正面全身' : activeKind === 'body-left' ? '左侧全身' : activeKind === 'body-right' ? '右侧全身' : '背面全身'}</strong><small>通常需要 20–60 秒，完成后会自动显示在当前格子</small></span></div>}
-        {currentAsset?.imageUrl && <div className="asset-confirm-row"><button onClick={() => window.open(currentAsset.imageUrl, '_blank')}>查看大图</button><button className={confirmed.includes(currentAsset.assetId) ? 'confirmed' : ''} onClick={() => setConfirmed((old) => old.includes(currentAsset.assetId) ? old.filter((id) => id !== currentAsset.assetId) : [...old, currentAsset.assetId])}><Check size={14} />{confirmed.includes(currentAsset.assetId) ? '已确认这张' : '确认这张'}</button></div>}
+        {currentAsset?.imageUrl && <div className="asset-confirm-row"><span>满意就直接确认整套人物资产</span><button onClick={() => window.open(currentAsset.imageUrl, '_blank')}>查看大图</button></div>}
         <div className="point-refine"><input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="可选：脸不变，外套换成米白色；不填则重新生成" /><button disabled={generating} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" /> : <WandSparkles />}{generating ? '生成中…' : currentAsset ? '按意见重做' : 'AI 生成'}</button></div>
       </section>
 
-      <FixedAction><button className="primary-wide" disabled={saving} onClick={() => void finish()}>{saving ? <LoaderCircle className="spin" /> : <Check />}确认人物资产</button></FixedAction>
+      <FixedAction><button className="primary-wide" disabled={saving || generating} onClick={() => void finish()}>{saving ? <LoaderCircle className="spin" /> : <Check />}确认身份脸与全身形象</button></FixedAction>
     </MobilePage>
   );
 }

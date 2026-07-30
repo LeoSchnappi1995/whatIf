@@ -361,9 +361,15 @@
 }
 .asset-confirm-row {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 10px;
+}
+.asset-confirm-row > span {
+  margin-right: auto;
+  color: #879091;
+  font-size: 9px;
 }
 .asset-generation-notice {
   display: flex;
