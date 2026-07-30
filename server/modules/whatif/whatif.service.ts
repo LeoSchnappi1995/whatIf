@@ -28,8 +28,19 @@ import { WhatifAiService } from './whatif-ai.service';
 const ASSET_BASE = 'assets/whatif';
 const MODEL_ASSET_PATHS = {
   officialJiangyu: '/1872109747097770.png',
+  officialShenyan: '/1872109769788425.png',
+  worldModern: '/1872111125764106.jpg',
+  worldPeriod: '/1872111125764122.jpg',
   worldFuture: '/1872108341537802.png',
+  worldArt: '/1872109769788441.jpg',
 } as const;
+
+const WORLDVIEW_MODEL_PATHS: Record<string, string> = {
+  'world-modern-romance': MODEL_ASSET_PATHS.worldModern,
+  'world-period-romance': MODEL_ASSET_PATHS.worldPeriod,
+  'world-future-parallel': MODEL_ASSET_PATHS.worldFuture,
+  'world-art-life': MODEL_ASSET_PATHS.worldArt,
+};
 
 const officialCharacters = [
   {
@@ -56,7 +67,7 @@ const officialCharacters = [
     selectable: true,
     authorizationStatus: 'not_required',
     assetVersion: 4,
-    assetViews: { identityFace: `${ASSET_BASE}/role-male-a.png` },
+    assetViews: { identityFace: MODEL_ASSET_PATHS.officialShenyan },
   },
 ] as const;
 
@@ -324,15 +335,25 @@ export class WhatifService {
   }
 
   private async worldviewOptions(ownerId: string) {
+    const defaults = await Promise.all(
+      fallbackWorldviews.map(async (item) => ({
+        ...item,
+        coverUrl: await this.signed(WORLDVIEW_MODEL_PATHS[item.worldviewId] || item.coverUrl),
+      })),
+    );
     try {
       const rows = await this.db.select().from(whatifWorldviews)
         .where(and(inArray(whatifWorldviews.ownerId, ['system', ownerId]), eq(whatifWorldviews.status, 'active')))
         .orderBy(desc(whatifWorldviews.ownerId), desc(whatifWorldviews.updatedAt));
-      if (rows.length) return Promise.all(rows.map(async (row, index) => ({ worldviewId: row.id, name: row.name, coverUrl: await this.signed(row.id === 'world-future-parallel' ? MODEL_ASSET_PATHS.worldFuture : row.coverPath), atmosphere: row.atmosphere, description: row.description, stylePrompt: row.stylePrompt, recommended: index === 0, available: true, assetVersion: row.currentVersion })));
+      if (rows.length) {
+        const configured = await Promise.all(rows.map(async (row) => ({ worldviewId: row.id, name: row.name, coverUrl: await this.signed(WORLDVIEW_MODEL_PATHS[row.id] || row.coverPath), atmosphere: row.atmosphere, description: row.description, stylePrompt: row.stylePrompt, recommended: row.id === 'world-modern-romance', available: true, assetVersion: row.currentVersion })));
+        const configuredIds = new Set(configured.map((item) => item.worldviewId));
+        return [...configured, ...defaults.filter((item) => !configuredIds.has(item.worldviewId))];
+      }
     } catch (error) {
       if (!this.isMissingTable(error)) throw error;
     }
-    return fallbackWorldviews;
+    return defaults;
   }
 
   async getCastSetting(ownerId: string, draftId: string) {
