@@ -10,6 +10,8 @@ module.exports = tseslint.config(
       'source_package',
       'client/src/api/gen',
       '**/*.d.ts',
+      '**/*.spec.ts',
+      '**/*.e2e-spec.ts',
       '**/*.js.map',
     ],
   },
@@ -45,7 +47,7 @@ module.exports = tseslint.config(
     ],
     languageOptions: {
       parserOptions: {
-        project: './tsconfig.node.json',
+        project: './tsconfig.eslint.json',
       }
     },
     settings: {

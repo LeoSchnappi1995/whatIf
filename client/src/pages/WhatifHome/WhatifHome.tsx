@@ -27,7 +27,7 @@ import './whatif-home.css';
 
 const SCROLL_STORAGE_KEY = 'whatif-home-scroll-y';
 
-const previewCards: Record<StatusCardType, HomeStatusCard> = {
+const previewCards: Partial<Record<StatusCardType, HomeStatusCard>> = {
   pending_invitation: {
     type: 'pending_invitation',
     eyebrow: '好友邀请',
@@ -114,10 +114,11 @@ function formatLikes(value: number) {
 function getErrorMessage(error: unknown) {
   if (typeof error === 'object' && error !== null) {
     const candidate = error as {
-      response?: { data?: { error?: { message?: string } } };
+      response?: { data?: { error?: { code?: string; message?: string; details?: string } } };
       message?: string;
     };
-    return candidate.response?.data?.error?.message ?? candidate.message;
+    const payload = candidate.response?.data?.error;
+    return payload?.message ? `${payload.message}${payload.code ? ` (${payload.code})` : ''}${payload.details ? `：${payload.details}` : ''}` : candidate.message;
   }
   return undefined;
 }
@@ -156,10 +157,12 @@ function StatusCard({
   card,
   onPrimary,
   onSecondary,
+  onManage,
 }: {
   card: HomeStatusCard;
   onPrimary: () => void;
   onSecondary: () => void;
+  onManage: () => void;
 }) {
   const isCharacterCard =
     card.type === 'existing_character' || card.type === 'no_character';
@@ -182,7 +185,7 @@ function StatusCard({
           <button
             className="status-manage"
             type="button"
-            onClick={() => toast('角色管理页将在下一步接入')}
+            onClick={onManage}
           >
             {card.type === 'no_character' ? '去创建' : '管理'}
           </button>
@@ -258,7 +261,7 @@ export default function WhatifHome() {
 
   const previewState = useMemo(() => {
     const value = new URLSearchParams(window.location.search).get('previewState');
-    return value && value in previewCards ? (value as StatusCardType) : null;
+    return value && value in previewCards ? (value as keyof typeof previewCards) : null;
   }, []);
 
   const loadHome = useCallback(async () => {
@@ -268,7 +271,7 @@ export default function WhatifHome() {
       const response = await getWhatifHome();
       setData(
         previewState
-          ? { ...response, statusCard: { ...previewCards[previewState], characters: response.statusCard.characters } }
+          ? { ...response, statusCard: { ...previewCards[previewState]!, characters: response.statusCard.characters } }
           : response,
       );
       requestAnimationFrame(() => {
@@ -315,27 +318,14 @@ export default function WhatifHome() {
 
   const handlePrimaryAction = () => {
     if (!data) return;
-    const { type } = data.statusCard;
-    if (type === 'video_generating') {
-      toast('视频仍在生成中', { description: '你可以离开页面，完成后会收到通知' });
-      return;
-    }
-    if (type === 'video_failed') {
-      toast('已恢复失败任务上下文', { description: '下一步将进入原剧情编辑页' });
-      return;
-    }
-    if (type === 'pending_invitation') {
-      toast('正在打开好友邀请', { description: '确认角色授权后即可加入故事' });
-      return;
-    }
-    if (type === 'collaboration_ready') {
-      toast('正在打开新成片');
-      return;
-    }
-    if (type === 'story_resumable') {
-      toast('正在进入下一幕编辑页');
-      return;
-    }
+    const { targetPage, targetId, type } = data.statusCard;
+    if (targetPage === 'invitation' && targetId) return navigate(`/invitations/${targetId}`);
+    if (targetPage === 'video_task' && targetId) return navigate(`/video-tasks/${targetId}`);
+    if (targetPage === 'timeline' && targetId) return navigate(`/stories/${targetId}/timeline`);
+    if (targetPage === 'character_new' || type === 'no_character') return navigate('/characters/new');
+    if (type === 'pending_invitation' && data.statusCard.storyId) return navigate(`/invitations/${data.statusCard.storyId}`);
+    if ((type === 'video_generating' || type === 'video_failed') && data.statusCard.taskId) return navigate(`/video-tasks/${data.statusCard.taskId}`);
+    if ((type === 'story_resumable' || type === 'continuable_story') && data.statusCard.storyId) return navigate(`/stories/${data.statusCard.storyId}/timeline`);
     void handleCreate();
   };
 
@@ -395,7 +385,7 @@ export default function WhatifHome() {
             <small>WHAT IF</small>
             <h1>第二世界</h1>
           </div>
-          <button type="button" onClick={() => toast('个人中心将在后续页面接入')}>
+          <button type="button" onClick={() => navigate('/stories')}>
             我的
           </button>
         </header>
@@ -417,7 +407,7 @@ export default function WhatifHome() {
           <button
             className="hero-play"
             type="button"
-            onClick={() => toast('正在打开完整成片')}
+            onClick={() => navigate(`/works/${data.hero.workId || data.hero.id}`)}
             aria-label="播放主推成片"
           >
             <Play size={22} fill="currentColor" />
@@ -435,7 +425,8 @@ export default function WhatifHome() {
         <StatusCard
           card={data.statusCard}
           onPrimary={handlePrimaryAction}
-          onSecondary={() => toast('正在打开我的故事')}
+          onSecondary={() => navigate('/stories')}
+          onManage={() => navigate(data.statusCard.type === 'no_character' ? '/characters/new' : '/characters')}
         />
 
         <section className="popular-section">
@@ -455,15 +446,7 @@ export default function WhatifHome() {
               <WorkCard
                 key={work.id}
                 work={work}
-                onOpen={() =>
-                  toast(work.title, {
-                    description: '完整作品详情页将在下一阶段接入',
-                    action: {
-                      label: '创作同款',
-                      onClick: () => void handleCreate(work.id),
-                    },
-                  })
-                }
+                onOpen={() => navigate(`/works/${work.workId || work.id}`)}
               />
             ))}
           </div>
