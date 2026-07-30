@@ -318,7 +318,7 @@ export default function CastSetting() {
           <section className="cast-intro">
             <span>第 1 步 · 故事演员</span>
             <h1>这个故事里，<br />你希望谁来出演？</h1>
-            <p>选好人物和世界观，下一步只要描述你想发生的故事。</p>
+            <p>可以直接使用内置人物，无需上传；下一步只要描述你想发生的故事。</p>
           </section>
 
           <section className="cast-story-name">
@@ -331,7 +331,7 @@ export default function CastSetting() {
             <div className="cast-section-heading">
               <div>
                 <strong>选择角色</strong>
-                <small>最多 3 人，可随时取消</small>
+                <small>内置人物无需上传，最多选择 3 人</small>
               </div>
               <span>已选 {selectedIds.length}/{data.maxCharacterCount}</span>
             </div>

@@ -307,16 +307,38 @@ export class WhatifAiService {
   }
 
   async compileSeedance(input: Record<string, unknown>) {
+    const referenceAssets = (Array.isArray(input.referenceAssets) ? input.referenceAssets : [])
+      .map((asset: any, index) => ({
+        token: String(asset?.token || `@图片${index + 1}`),
+        role: 'reference_image',
+        purpose: String(asset?.purpose || '').trim(),
+      }))
+      .filter((asset) => asset.purpose);
+    const referenceBindings = referenceAssets.length
+      ? referenceAssets.map((asset) => `${asset.token}：${asset.purpose}`).join('\n')
+      : '本次没有图片参考，只根据文字导演方案生成。';
     const result: any = await this.textJson(
-      renderPrompt(SEEDANCE_COMPILER_PROMPT, { INPUT_JSON: JSON.stringify(input) }),
+      renderPrompt(SEEDANCE_COMPILER_PROMPT, {
+        REFERENCE_BINDINGS: referenceBindings,
+        INPUT_JSON: JSON.stringify(input),
+      }),
       0.2,
     );
-    const prompt = String(result?.prompt || '').trim();
-    if (!prompt) throw this.codedError('SEEDANCE_PROMPT_EMPTY', '视频 Prompt 编译失败', 502);
+    const compiledPrompt = String(result?.prompt || '').trim();
+    if (!compiledPrompt) throw this.codedError('SEEDANCE_PROMPT_EMPTY', '视频 Prompt 编译失败', 502);
+    const prompt = referenceAssets.length
+      ? `Reference asset bindings (the numbering exactly matches the following image inputs):\n${referenceBindings}\n\n${compiledPrompt}`
+      : compiledPrompt;
+    const textOnlyPrompt = referenceAssets.reduce(
+      (value, asset) => value.replaceAll(asset.token, `[${asset.purpose}]`),
+      compiledPrompt,
+    );
     return {
       prompt,
+      promptBody: compiledPrompt,
+      textOnlyPrompt,
       negativePrompt: String(result?.negativePrompt || ''),
-      referencePlan: Array.isArray(result?.referencePlan) ? result.referencePlan : [],
+      referencePlan: referenceAssets,
       promptVersion: PROMPT_VERSIONS.seedanceCompiler,
     };
   }
@@ -394,7 +416,9 @@ export class WhatifAiService {
 
   async createVideo(input: {
     prompt: string;
+    promptBody?: string;
     referenceImages?: string[];
+    referenceAssets?: Array<{ url: string; token?: string; purpose?: string }>;
     copyrightSafePrompt?: string;
     traceId?: string;
     taskId?: string;
@@ -404,7 +428,21 @@ export class WhatifAiService {
       throw this.codedError('SEEDANCE_NOT_CONFIGURED', 'Seedance 2.0 尚未配置', 503);
     }
     const traceId = input.traceId || randomUUID();
-    const images = this.validImageUrls(input.referenceImages || [], 4);
+    const sourceAssets = Array.isArray(input.referenceAssets) && input.referenceAssets.length
+      ? input.referenceAssets
+      : (input.referenceImages || []).map((url, index) => ({
+          url,
+          token: `@图片${index + 1}`,
+          purpose: `第${index + 1}张参考图`,
+        }));
+    const validUrls = new Set(this.validImageUrls(sourceAssets.map((asset) => asset.url), 9));
+    const referenceAssets = sourceAssets
+      .filter((asset) => validUrls.has(String(asset.url || '').trim()))
+      .map((asset, index) => ({
+        url: String(asset.url).trim(),
+        token: String(asset.token || `@图片${index + 1}`),
+        purpose: String(asset.purpose || `第${index + 1}张参考图`),
+      }));
     const attempts: Array<Record<string, unknown>> = [];
     const endpoint = `${this.seedanceBase}/contents/generations/tasks`;
     const requestLog = () => ({
@@ -474,28 +512,66 @@ export class WhatifAiService {
       return { response, data };
     };
 
-    const content: any[] = [{ type: 'text', text: input.prompt }];
-    images.forEach((url) => content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' }));
-    let inputMode = images.length ? 'reference_image' : 'text_only';
+    const promptBody = input.promptBody || input.prompt;
+    const remapPrompt = (
+      body: string,
+      originalAssets: typeof referenceAssets,
+      activeAssets: typeof referenceAssets,
+    ) => {
+      let remapped = body;
+      originalAssets.forEach((asset, index) => {
+        remapped = remapped.replaceAll(asset.token, `__SEEDANCE_REFERENCE_${index + 1}__`);
+      });
+      originalAssets.forEach((asset, index) => {
+        const activeIndex = activeAssets.findIndex((active) => active.url === asset.url);
+        const replacement = activeIndex >= 0
+          ? `@图片${activeIndex + 1}`
+          : `[${asset.purpose}，该参考图不可用，仅按文字描述]`;
+        remapped = remapped.replaceAll(`__SEEDANCE_REFERENCE_${index + 1}__`, replacement);
+      });
+      return remapped;
+    };
+    const boundPrompt = (activeAssets: typeof referenceAssets) => {
+      const body = remapPrompt(promptBody, referenceAssets, activeAssets);
+      if (!activeAssets.length) return body;
+      const bindings = activeAssets
+        .map((asset, index) => `@图片${index + 1}：${asset.purpose}`)
+        .join('\n');
+      return `Reference asset bindings (the numbering exactly matches the following image inputs):\n${bindings}\n\n${body}`;
+    };
+    const contentFor = (activeAssets: typeof referenceAssets) => [
+      { type: 'text', text: boundPrompt(activeAssets) },
+      ...activeAssets.map((asset) => ({
+        type: 'image_url',
+        image_url: { url: asset.url },
+        role: 'reference_image',
+      })),
+    ];
+
+    let activeAssets = referenceAssets;
+    let content: any[] = contentFor(activeAssets);
+    let inputMode = activeAssets.length ? 'reference_image' : 'text_only';
     let { response, data } = await submit(content, inputMode);
     const firstError = this.taskError(data);
-    if (!response.ok && images.length && this.shouldRetryWithoutReferences(firstError)) {
+    if (!response.ok && activeAssets.length && this.shouldRetryWithoutReferences(firstError)) {
       const rejectedIndex = this.rejectedContentIndex(firstError);
-      const filteredContent = rejectedIndex > 0 && rejectedIndex < content.length
-        ? content.filter((_, index) => index !== rejectedIndex)
-        : content;
-      if (filteredContent.length > 1 && filteredContent.length < content.length) {
+      const rejectedAssetIndex = rejectedIndex - 1;
+      if (rejectedAssetIndex >= 0 && rejectedAssetIndex < activeAssets.length) {
         this.logger.warn(`Seedance rejected content[${rejectedIndex}]; retrying without that reference. reason=${firstError}`);
+        activeAssets = activeAssets.filter((_, index) => index !== rejectedAssetIndex);
+        content = contentFor(activeAssets);
         inputMode = 'reference_image_filtered';
-        ({ response, data } = await submit(filteredContent, inputMode));
+        ({ response, data } = await submit(content, inputMode));
       }
     }
     const referenceRetryError = this.taskError(data);
-    if (!response.ok && images.length && this.shouldRetryWithoutReferences(referenceRetryError || firstError)) {
+    if (!response.ok && referenceAssets.length && this.shouldRetryWithoutReferences(referenceRetryError || firstError)) {
       this.logger.warn(`Seedance still rejected reference input; one text-only safety retry is submitted. reason=${referenceRetryError || firstError}`);
       inputMode = 'text_only_safety_fallback';
       ({ response, data } = await submit([
-        { type: 'text', text: JSON.stringify({ dynamic_caption: input.copyrightSafePrompt || input.prompt }) },
+        { type: 'text', text: JSON.stringify({
+          dynamic_caption: input.copyrightSafePrompt || remapPrompt(promptBody, referenceAssets, []),
+        }) },
       ], inputMode));
     }
     if (!response.ok) {

@@ -2,7 +2,7 @@ export const PROMPT_VERSIONS = {
   characterProfile: 'character-profile-v2',
   characterAsset: 'character-asset-v2',
   storyDirector: 'story-director-v3',
-  seedanceCompiler: 'seedance-compiler-v2',
+  seedanceCompiler: 'seedance-compiler-v3',
   publicationCopy: 'publication-copy-v2',
 } as const;
 
@@ -86,18 +86,27 @@ export const STORY_DIRECTOR_PROMPT = `
 export const SEEDANCE_COMPILER_PROMPT = `
 你是 Seedance 2.0 的视频 Prompt 编译器。把已经确认的 15 秒导演方案编译为一个可执行的竖屏短片指令，不改写剧情。
 
-要求：
+参考素材绑定：
+下面每个“@图片N”与最终 Seedance 请求中第 N 个 image_url 的顺序严格一致。必须在最终 Prompt 中逐字使用这些编号，不得重排、改号、遗漏或虚构不存在的图片。
+{{REFERENCE_BINDINGS}}
+
+编译要求：
 1. 只生成一个连续 15 秒事件，9:16，720p，原生中文声音；明确人物身份锁、服装锁、场景锁、道具锁和上一幕连续性。
-2. 按时间轴写动作、镜头、表演、对白、环境音、动作音和音乐。动作必须连续，避免静态摆拍和幻灯片。
-3. 参考图只负责身份、场景和道具一致性，不得照抄参考图中的无关姿势、文字或背景。
-4. 对白逐字保留，最多两句；口型、说话人和情绪匹配。
-5. 禁止字幕、水印、画中画、拼贴、分屏、额外人物、身份漂移、服装跳变、道具变形和镜头时间倒流。
+2. 最终 Prompt 开头必须先写清素材绑定。例如：“@图片1 是林夏的人物身份参考；@图片2 是江屿的人物身份参考；@图片3 是世界与场景参考。”多角色第一次出现时必须把角色姓名与对应的 @图片N 放在一起。
+3. 严格按素材用途使用参考图：人物身份图只锁定对应人物的脸、发型、年龄和辨识特征；人物全身图只锁定对应人物的身材比例、基础服装和整体轮廓；世界观图只锁定场景美术、时代、材质、色彩和光线。不得把一张图的人脸、服装或背景错误迁移给另一张图。
+4. 参考图只负责其已标注的身份、造型、场景或道具一致性，不得照抄无关姿势、构图、文字、Logo、水印和背景。多张图冲突时，以人物身份图的人脸、人物全身图的体态、世界观图的环境为各自维度的最高优先级。
+5. 按 0-15 秒时间轴写动作、镜头、表演、对白、环境音、动作音和音乐。上一段动作的结束状态必须成为下一段的开始状态，避免静态摆拍、慢推静帧和幻灯片。
+6. 每个角色只能由自己绑定的参考图控制；画面中必须保持角色数量、姓名、位置、视线和动作关系清楚，禁止角色融合、换脸、互换服装或凭空增加人物。
+7. 对白逐字保留，最多两句；注明说话人、出现时间、情绪和口型要求。没有对白时不要强加对白。
+8. 世界观必须在建筑、环境规则、道具、光线、声音或人物动作中被感知，不能退化为普通无关背景；同时继承上一幕 continuityOut。
+9. 最终 Prompt 使用可直接拍摄的具体描述，不写抽象心理，不写“参考上述内容”等模糊指令。中文对白保留中文，其他制作指令使用清晰英文。
+10. 禁止字幕、水印、画中画、拼贴、分屏、额外人物、身份漂移、服装跳变、道具变形、镜头时间倒流，以及未绑定参考图之间的特征串用。
 
 输入 JSON：
 {{INPUT_JSON}}
 
 严格返回 JSON：
-{"prompt":"最终 Seedance 英文主 Prompt，中文对白保留中文","negativePrompt":"负面约束","referencePlan":[{"url":"原输入URL","role":"first_frame|last_frame|reference_image","purpose":"用途"}]}
+{"prompt":"必须包含全部 @图片N 绑定的最终 Seedance 英文主 Prompt，中文对白保留中文","negativePrompt":"负面约束","referencePlan":[{"token":"@图片1","role":"reference_image","purpose":"与输入绑定完全一致的用途"}]}
 `;
 
 export const PUBLICATION_COPY_PROMPT = `

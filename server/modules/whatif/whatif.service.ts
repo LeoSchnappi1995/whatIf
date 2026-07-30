@@ -5,6 +5,8 @@ import {
   type PostgresJsDatabase,
 } from '@lark-apaas/fullstack-nestjs-core';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { readFile } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -42,6 +44,24 @@ const WORLDVIEW_MODEL_PATHS: Record<string, string> = {
   'world-art-life': MODEL_ASSET_PATHS.worldArt,
 };
 
+const BUILTIN_CAST_ASSET_PATHS = {
+  linxia: `${ASSET_BASE}/generated-cast/linxia.png`,
+  sunian: `${ASSET_BASE}/generated-cast/sunian.png`,
+  tangyou: `${ASSET_BASE}/generated-cast/tangyou.png`,
+  guyan: `${ASSET_BASE}/generated-cast/guyan.png`,
+  zhouye: `${ASSET_BASE}/generated-cast/zhouye.png`,
+  luchen: `${ASSET_BASE}/generated-cast/luchen.png`,
+} as const;
+
+const BUILTIN_CAST_AVATAR_PATHS = {
+  linxia: `${ASSET_BASE}/generated-cast/thumbs/linxia.jpg`,
+  sunian: `${ASSET_BASE}/generated-cast/thumbs/sunian.jpg`,
+  tangyou: `${ASSET_BASE}/generated-cast/thumbs/tangyou.jpg`,
+  guyan: `${ASSET_BASE}/generated-cast/thumbs/guyan.jpg`,
+  zhouye: `${ASSET_BASE}/generated-cast/thumbs/zhouye.jpg`,
+  luchen: `${ASSET_BASE}/generated-cast/thumbs/luchen.jpg`,
+} as const;
+
 const officialCharacters = [
   {
     characterId: 'official-jiangyu',
@@ -68,6 +88,84 @@ const officialCharacters = [
     authorizationStatus: 'not_required',
     assetVersion: 4,
     assetViews: { identityFace: MODEL_ASSET_PATHS.officialShenyan },
+  },
+  {
+    characterId: 'builtin-linxia',
+    name: '林夏',
+    avatarUrl: BUILTIN_CAST_AVATAR_PATHS.linxia,
+    summary: '温柔坚定 · 都市生活',
+    description: '26岁，黑色长发，温柔真诚但有自己的坚持，擅长在细节里表达关心。',
+    sourceType: 'official',
+    badges: ['内置', '都市'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 1,
+    assetViews: { identityFace: BUILTIN_CAST_ASSET_PATHS.linxia, bodyFront: BUILTIN_CAST_ASSET_PATHS.linxia },
+  },
+  {
+    characterId: 'builtin-sunian',
+    name: '苏念',
+    avatarUrl: BUILTIN_CAST_AVATAR_PATHS.sunian,
+    summary: '冷静清醒 · 都市职场',
+    description: '29岁，深棕色中长发，理性干练、观察敏锐，习惯用行动解决问题。',
+    sourceType: 'official',
+    badges: ['内置', '都市'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 1,
+    assetViews: { identityFace: BUILTIN_CAST_ASSET_PATHS.sunian, bodyFront: BUILTIN_CAST_ASSET_PATHS.sunian },
+  },
+  {
+    characterId: 'builtin-tangyou',
+    name: '唐柚',
+    avatarUrl: BUILTIN_CAST_AVATAR_PATHS.tangyou,
+    summary: '明亮率真 · 都市青春',
+    description: '24岁，黑色短发，直率活泼、情绪鲜明，面对喜欢的事情会主动向前。',
+    sourceType: 'official',
+    badges: ['内置', '都市'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 1,
+    assetViews: { identityFace: BUILTIN_CAST_ASSET_PATHS.tangyou, bodyFront: BUILTIN_CAST_ASSET_PATHS.tangyou },
+  },
+  {
+    characterId: 'builtin-guyan',
+    name: '顾言',
+    avatarUrl: BUILTIN_CAST_AVATAR_PATHS.guyan,
+    summary: '温和可靠 · 都市爱情',
+    description: '28岁，黑色短发，温和细致、情绪稳定，擅长在关键时刻给出明确回应。',
+    sourceType: 'official',
+    badges: ['内置', '都市'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 1,
+    assetViews: { identityFace: BUILTIN_CAST_ASSET_PATHS.guyan, bodyFront: BUILTIN_CAST_ASSET_PATHS.guyan },
+  },
+  {
+    characterId: 'builtin-zhouye',
+    name: '周野',
+    avatarUrl: BUILTIN_CAST_AVATAR_PATHS.zhouye,
+    summary: '直接热烈 · 都市青春',
+    description: '26岁，利落短发，坦率有行动力，喜欢把复杂的事情用最直接的方式说清楚。',
+    sourceType: 'official',
+    badges: ['内置', '都市'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 1,
+    assetViews: { identityFace: BUILTIN_CAST_ASSET_PATHS.zhouye, bodyFront: BUILTIN_CAST_ASSET_PATHS.zhouye },
+  },
+  {
+    characterId: 'builtin-luchen',
+    name: '陆沉',
+    avatarUrl: BUILTIN_CAST_AVATAR_PATHS.luchen,
+    summary: '成熟克制 · 都市悬念',
+    description: '31岁，深色短发，沉着克制、判断果断，很少解释自己但会承担结果。',
+    sourceType: 'official',
+    badges: ['内置', '都市'],
+    selectable: true,
+    authorizationStatus: 'not_required',
+    assetVersion: 1,
+    assetViews: { identityFace: BUILTIN_CAST_ASSET_PATHS.luchen, bodyFront: BUILTIN_CAST_ASSET_PATHS.luchen },
   },
 ] as const;
 
@@ -106,6 +204,7 @@ type AnyRecord = Record<string, any>;
 @Injectable()
 export class WhatifService {
   private readonly logger = new Logger(WhatifService.name);
+  private readonly bundledModelReferenceCache = new Map<string, Promise<string>>();
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
@@ -554,7 +653,8 @@ export class WhatifService {
     const source = String(value || '').trim();
     if (!source) return '';
     if (/^https?:\/\//.test(source) || source.startsWith('data:image')) return source;
-    if (source.replace(/^\/+/, '').startsWith(`${ASSET_BASE}/`)) return '';
+    const relativeSource = source.replace(/^\/+/, '');
+    if (relativeSource.startsWith(`${ASSET_BASE}/`)) return this.bundledModelReference(relativeSource);
     try {
       const signed = await this.signed(source);
       return /^https?:\/\//.test(signed) ? signed : '';
@@ -564,17 +664,83 @@ export class WhatifService {
     }
   }
 
-  private async referenceUrlsFromSnapshots(characters: AnyRecord[], worldview: AnyRecord) {
-    const selected: unknown[] = [];
-    for (const [index, character] of characters.entries()) {
-      const identity = character.assetViews?.identityFace || character.avatarUrl;
-      const body = character.assetViews?.bodyFront;
-      if (identity) selected.push(identity);
-      if (index === 0 && body) selected.push(body);
+  private async bundledModelReference(relativeSource: string) {
+    if (!relativeSource.startsWith(`${ASSET_BASE}/`) || relativeSource.includes('..')) return '';
+    const cached = this.bundledModelReferenceCache.get(relativeSource);
+    if (cached) return cached;
+
+    const pending = (async () => {
+      const candidates = [
+        resolve(process.cwd(), 'client/public', relativeSource),
+        resolve(process.cwd(), 'client', relativeSource),
+      ];
+      let buffer: Buffer | null = null;
+      for (const candidate of candidates) {
+        try {
+          buffer = await readFile(candidate);
+          break;
+        } catch {
+          // Try the next development/production asset location.
+        }
+      }
+      if (!buffer) throw new Error(`Bundled asset not found: ${relativeSource}`);
+      const uploaded = await this.files.upload(buffer, {
+        fileName: `whatif-builtin-${basename(relativeSource)}`,
+        contentType: relativeSource.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
+      });
+      return this.signed(uploaded.filePath);
+    })();
+    this.bundledModelReferenceCache.set(relativeSource, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      this.bundledModelReferenceCache.delete(relativeSource);
+      this.logger.warn(`Unable to prepare bundled model reference ${relativeSource}: ${error instanceof Error ? error.message : error}`);
+      return '';
     }
-    if (worldview?.coverUrl) selected.push(worldview.coverUrl);
-    const references = await Promise.all(Array.from(new Set(selected.map(String))).map((value) => this.modelReference(value)));
-    return Array.from(new Set(references.filter(Boolean))).slice(0, 4);
+  }
+
+  private async referenceAssetsFromSnapshots(characters: AnyRecord[], worldview: AnyRecord) {
+    const selected: Array<{ source: unknown; purpose: string }> = [];
+    const add = (source: unknown, purpose: string) => {
+      if (source) selected.push({ source, purpose });
+    };
+
+    // Identity images are the highest priority for multi-character face consistency.
+    for (const character of characters) {
+      add(
+        character.assetViews?.identityFace || character.avatarUrl,
+        `${String(character.name || '该角色')}的人物身份参考，只锁定该角色的脸、发型、年龄与辨识特征`,
+      );
+    }
+    // Keep the story world available before optional body references consume the 9-image allowance.
+    add(
+      worldview?.coverUrl,
+      `${String(worldview?.name || '本故事')}的世界与场景美术参考，只锁定时代、环境、材质、色彩与光线`,
+    );
+    for (const character of characters) {
+      add(
+        character.assetViews?.bodyFront,
+        `${String(character.name || '该角色')}的全身造型参考，只锁定身材比例、基础服装与整体轮廓`,
+      );
+    }
+
+    const resolved = await Promise.all(selected.map(async (item) => ({
+      url: await this.modelReference(item.source),
+      purpose: item.purpose,
+    })));
+    const deduplicated = new Map<string, { url: string; purpose: string }>();
+    for (const item of resolved) {
+      if (!item.url) continue;
+      const existing = deduplicated.get(item.url);
+      if (existing) existing.purpose = `${existing.purpose}；${item.purpose}`;
+      else deduplicated.set(item.url, { ...item });
+    }
+    return Array.from(deduplicated.values()).slice(0, 9).map((item, index) => ({
+      ...item,
+      token: `@图片${index + 1}`,
+      role: 'reference_image' as const,
+    }));
   }
 
   private async previousScene(ownerId: string, parentSceneId?: string) {
@@ -597,14 +763,22 @@ export class WhatifService {
     const previous = await this.previousScene(ownerId, body.parentSceneId ? String(body.parentSceneId) : undefined);
     const directorPlan = body.directorPlan && Array.isArray(body.directorPlan.shots) ? body.directorPlan : await this.ai.directScene({ script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous });
     if (directorPlan.capacity?.status === 'overflow' && body.force !== true) this.fail('SCENE_CAPACITY_OVERFLOW', directorPlan.capacity.message || '这一幕超过 15 秒，请缩短或拆成两幕', 422, { suggestedScript: directorPlan.capacity.suggestedScript });
-    const compilation = await this.ai.compileSeedance({ story: { title: context.draft.title, setting: context.draft.setting, worldview: context.worldview }, characters: context.casts, directorPlan, previous, userScript: script });
+    const referenceAssets = await this.referenceAssetsFromSnapshots(context.casts, context.worldview);
+    const compilation = await this.ai.compileSeedance({
+      story: { title: context.draft.title, setting: context.draft.setting, worldview: context.worldview },
+      characters: context.casts,
+      directorPlan,
+      previous,
+      userScript: script,
+      referenceAssets: referenceAssets.map(({ token, role, purpose }) => ({ token, role, purpose })),
+    });
     const requestedBranchId = body.branchId ? String(body.branchId) : undefined;
     const { story, branch } = await this.ensureStory(ownerId, draftId, requestedBranchId);
     const scenes = await this.db.select().from(whatifScenes).where(and(eq(whatifScenes.storyId, story.id), eq(whatifScenes.branchId, branch.id)));
     const sequence = scenes.length ? Math.max(...scenes.map((scene) => scene.sequence)) + 1 : Number(previous?.sequence || 0) + 1;
     const sceneId = this.id('scene');
     const taskId = this.id('video_task');
-    const referenceImages = await this.referenceUrlsFromSnapshots(context.casts, context.worldview);
+    const referenceImages = referenceAssets.map((asset) => asset.url);
     const baseRequestSnapshot = {
       httpRequest: { draftId, body },
       resolvedInput: {
@@ -620,6 +794,7 @@ export class WhatifService {
         directorPlan,
       },
       compilation,
+      referenceAssets,
       referenceImages,
     };
     this.logger.log(JSON.stringify({
@@ -638,8 +813,10 @@ export class WhatifService {
     try {
       const created = await this.ai.createVideo({
         prompt: `${compilation.prompt}\nNegative constraints: ${compilation.negativePrompt}`,
+        promptBody: `${compilation.promptBody}\nNegative constraints: ${compilation.negativePrompt}`,
         referenceImages,
-        copyrightSafePrompt: `${compilation.prompt}\nAll people are original fictional adults. Use stylized cinematic animation if any identity reference is unsafe.`,
+        referenceAssets,
+        copyrightSafePrompt: `${compilation.textOnlyPrompt}\nNegative constraints: ${compilation.negativePrompt}\nAll people are original fictional adults. Use stylized cinematic animation if any identity reference is unsafe.`,
         traceId,
         taskId,
         sceneId,
