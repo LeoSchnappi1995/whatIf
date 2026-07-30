@@ -384,7 +384,12 @@ export class WhatifAiService {
   }
 
   private shouldRetryWithoutReferences(message: string) {
-    return /real person|input image may contain|真人|reference_image|unsupported|not supported|image format|InvalidParameter\.UnsupportedImageFormat/i.test(message);
+    return /real person|input image may contain|真人|reference_image|unsupported|not supported|image format|copyright|restriction|policy.?violation|sensitive content|InputImageSensitiveContentDetected|InvalidParameter\.UnsupportedImageFormat/i.test(message);
+  }
+
+  private rejectedContentIndex(message: string) {
+    const matched = message.match(/content\[(\d+)\]/i);
+    return matched ? Number(matched[1]) : -1;
   }
 
   async createVideo(input: { prompt: string; referenceImages?: string[]; copyrightSafePrompt?: string }) {
@@ -417,7 +422,19 @@ export class WhatifAiService {
     let inputMode = images.length ? 'reference_image' : 'text_only';
     const firstError = this.taskError(data);
     if (!response.ok && images.length && this.shouldRetryWithoutReferences(firstError)) {
-      this.logger.warn(`Seedance rejected reference input; one text-only safety retry is submitted. reason=${firstError}`);
+      const rejectedIndex = this.rejectedContentIndex(firstError);
+      const filteredContent = rejectedIndex > 0 && rejectedIndex < content.length
+        ? content.filter((_, index) => index !== rejectedIndex)
+        : content;
+      if (filteredContent.length > 1 && filteredContent.length < content.length) {
+        this.logger.warn(`Seedance rejected content[${rejectedIndex}]; retrying without that reference. reason=${firstError}`);
+        ({ response, data } = await submit(filteredContent));
+        inputMode = 'reference_image_filtered';
+      }
+    }
+    const referenceRetryError = this.taskError(data);
+    if (!response.ok && images.length && this.shouldRetryWithoutReferences(referenceRetryError || firstError)) {
+      this.logger.warn(`Seedance still rejected reference input; one text-only safety retry is submitted. reason=${referenceRetryError || firstError}`);
       ({ response, data } = await submit([
         { type: 'text', text: JSON.stringify({ dynamic_caption: input.copyrightSafePrompt || input.prompt }) },
       ]));
