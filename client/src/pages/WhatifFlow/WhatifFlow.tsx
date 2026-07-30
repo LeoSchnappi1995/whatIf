@@ -175,7 +175,10 @@ export function CharacterEditorPage() {
       method: 'POST',
       data: { characterId: characterId || undefined, name, description, isSelf, visibility: 'private' },
     });
-    if (!characterId) setCharacterId(result.characterId);
+    if (!characterId) {
+      setCharacterId(result.characterId);
+      navigate(`/characters/${result.characterId}?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
+    }
     return result.characterId;
   };
 
@@ -192,7 +195,8 @@ export function CharacterEditorPage() {
         method: 'POST',
         data: { characterId: id, kind: activeKind, instruction, referenceImages, previousAsset: previous },
       });
-      setAssets((old) => [result, ...old.filter((item) => item.kind !== activeKind)]);
+      const generatedAsset = { ...result, kind: result.kind || activeKind };
+      setAssets((old) => [generatedAsset, ...old.filter((item) => item.kind !== activeKind)]);
       setConfirmed((old) => old.filter((id) => id !== assets.find((item) => item.kind === activeKind)?.assetId));
       setInstruction('');
       toast.success('这张标准人物图已生成，请查看大图后确认');
@@ -250,6 +254,7 @@ export function CharacterEditorPage() {
             return <AssetTile key={kind} asset={asset ? { ...asset, imageUrl: asset.imageUrl, kind } : { kind }} selected={activeKind === kind} onClick={() => setActiveKind(kind)} />;
           })}
         </div>
+        {generating && <div className="asset-generation-notice"><LoaderCircle className="spin" /><span><strong>正在生成{activeKind === 'identity-face' ? '身份脸' : activeKind === 'body-front' ? '正面全身' : activeKind === 'body-left' ? '左侧全身' : activeKind === 'body-right' ? '右侧全身' : '背面全身'}</strong><small>通常需要 20–60 秒，完成后会自动显示在当前格子</small></span></div>}
         {currentAsset?.imageUrl && <div className="asset-confirm-row"><button onClick={() => window.open(currentAsset.imageUrl, '_blank')}>查看大图</button><button className={confirmed.includes(currentAsset.assetId) ? 'confirmed' : ''} onClick={() => setConfirmed((old) => old.includes(currentAsset.assetId) ? old.filter((id) => id !== currentAsset.assetId) : [...old, currentAsset.assetId])}><Check size={14} />{confirmed.includes(currentAsset.assetId) ? '已确认这张' : '确认这张'}</button></div>}
         <div className="point-refine"><input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="可选：脸不变，外套换成米白色；不填则重新生成" /><button disabled={generating} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" /> : <WandSparkles />}{generating ? '生成中…' : currentAsset ? '按意见重做' : 'AI 生成'}</button></div>
       </section>
