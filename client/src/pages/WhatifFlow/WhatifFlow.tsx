@@ -368,7 +368,10 @@ export function SceneEditorPage() {
   }, [draftId, parentSceneId]);
 
   const runPreview = useCallback(async (nextScript: string, refinements?: Json) => {
-    if (nextScript.trim().length < 6) return;
+    if (nextScript.trim().length < 6) {
+      toast('至少描述 6 个字，再生成专业分镜');
+      return;
+    }
     const sequence = ++previewSequence.current;
     setPreviewing(true);
     try {
@@ -381,17 +384,19 @@ export function SceneEditorPage() {
     }
   }, [draftId, parentSceneId]);
 
-  useEffect(() => {
-    if (!context) return;
-    const timer = window.setTimeout(() => void runPreview(script), 950);
-    return () => window.clearTimeout(timer);
-  }, [script, context, runPreview]);
-
   const generate = async () => {
-    if (!plan) return;
+    if (script.trim().length < 6) {
+      toast('请先描述这一幕发生什么');
+      return;
+    }
+    // Generating the professional preview is optional. Invalidate any pending
+    // preview response and let the server compile the raw user script when no
+    // approved director plan exists.
+    previewSequence.current += 1;
+    setPreviewing(false);
     setSubmitting(true);
     try {
-      const result = await whatifRequest<Json>(`/api/story-drafts/${draftId}/scenes/generate`, { method: 'POST', data: { script, directorPlan: plan, parentSceneId, branchId } });
+      const result = await whatifRequest<Json>(`/api/story-drafts/${draftId}/scenes/generate`, { method: 'POST', data: { script, ...(plan ? { directorPlan: plan } : {}), parentSceneId, branchId } });
       navigate(`/video-tasks/${result.taskId}`);
     } catch (error) {
       toast.error(errorMessage(error));
@@ -403,21 +408,22 @@ export function SceneEditorPage() {
   const capacity = plan?.capacity;
   return <MobilePage title={parentSceneId ? '续写下一幕' : '描述第一幕'} eyebrow={`${context.story.title} · 15秒一幕`} action={<button onClick={() => navigate(`/story-drafts/${draftId}/advanced`)}><MoreHorizontal /></button>}>
     {context.previous && <section className="previous-summary"><small>前情概要</small><strong>{context.previous.title}</strong><p>{context.previous.summary}</p></section>}
-    <section className="script-card"><div className="script-heading"><span>你想让这一幕发生什么？</span><small>{script.length}/240</small></div><textarea value={script} maxLength={240} onChange={(e) => setScript(e.target.value)} placeholder="像给导演说戏一样描述：谁，在什么地方，做了什么，最后发生什么" /><div className="script-tips"><Mic2 size={15} /><span>直接说故事就好，服装、道具、镜头和声音由 AI 完成</span></div></section>
+    <section className="script-card"><div className="script-heading"><span>你想让这一幕发生什么？</span><small>{script.length}/240</small></div><textarea value={script} maxLength={240} onChange={(e) => { previewSequence.current += 1; setPreviewing(false); setPlan(null); setScript(e.target.value); }} placeholder="像给导演说戏一样描述：谁，在什么地方，做了什么，最后发生什么" /><div className="script-tips"><Mic2 size={15} /><span>直接说故事就好；可直接生成视频，也可以先让 AI 补全专业分镜</span></div></section>
     {capacity?.status === 'overflow' && <div className="capacity-warning"><CircleAlert /><div><strong>这段内容可能放不进 15 秒</strong><p>{capacity.message}</p><button onClick={() => setScript(capacity.suggestedScript)}>使用 AI 精简版</button></div></div>}
     <section className="ai-board">
-      <div className="ai-board-head"><div><Sparkles /><span><strong>AI 专业分镜</strong><small>{previewing ? '正在随你的输入更新…' : '已自动补全，可点任何一项微调'}</small></span></div>{previewing && <LoaderCircle className="spin" />}</div>
-      {!plan && <div className="board-placeholder"><Clapperboard /><span>停顿约 1 秒后自动生成</span></div>}
+      <div className="ai-board-head"><div><Sparkles /><span><strong>AI 专业分镜 · 可选</strong><small>{previewing ? '正在生成；你仍可以直接生成视频' : plan ? '已生成，可点任何一项局部修改' : '帮助补全造型、场景、镜头、声音与节奏'}</small></span></div>{previewing && <LoaderCircle className="spin" />}</div>
+      {!plan && <div className="board-placeholder"><Clapperboard /><span>{previewing ? 'AI 正在完成专业分镜…' : '想先看看 AI 会怎么拍？'}</span><button type="button" disabled={previewing || script.trim().length < 6} onClick={() => void runPreview(script)}>{previewing ? <LoaderCircle className="spin" /> : <Sparkles />}{previewing ? '正在生成分镜' : '生成 AI 专业分镜'}</button><small>不生成分镜，也能直接使用上面的剧情制作视频</small></div>}
       {plan && <>
         <button className="production-row" onClick={() => setEditingTarget('人物造型')}><span>人物造型</span><p>{Object.entries(plan.visual?.looks || {}).map(([name, look]) => `${name}：${look}`).join('；')}</p><ChevronRight /></button>
         <button className="production-row" onClick={() => setEditingTarget('场景')}><span>场景</span><p>{plan.visual?.scene}</p><ChevronRight /></button>
         <button className="production-row" onClick={() => setEditingTarget('关键道具')}><span>关键道具</span><p>{plan.visual?.props}</p><ChevronRight /></button>
         <button className="production-row" onClick={() => setEditingTarget('声音')}><span>声音</span><p>{plan.audio?.ambience}；{plan.audio?.music}</p><ChevronRight /></button>
         <div className="shot-strip">{(plan.shots || []).map((shot: Json, index: number) => <button key={index} onClick={() => setEditingTarget(`镜头${index + 1}`)}><i>{shot.time}</i><strong>{shot.title}</strong><p>{shot.action}</p></button>)}</div>
+        <button className="board-regenerate" type="button" disabled={previewing} onClick={() => void runPreview(script)}><WandSparkles />重新生成整套分镜</button>
       </>}
     </section>
     {editingTarget && <div className="refine-drawer"><div><strong>只修改：{editingTarget}</strong><button onClick={() => setEditingTarget('')}>×</button></div><textarea value={refinement} onChange={(e) => setRefinement(e.target.value)} placeholder={`例如：${editingTarget}里只改哪一点，其他保持不变`} /><button onClick={() => { void runPreview(script, { target: editingTarget, instruction: refinement, approvedPlan: plan }); setEditingTarget(''); setRefinement(''); }}><WandSparkles />让 AI 局部调整</button></div>}
-    <FixedAction><div className="price-hint"><span>生成 15 秒成片</span><strong>15 Soul币</strong></div><button className="primary-wide" disabled={!plan || previewing || submitting || capacity?.status === 'overflow'} onClick={() => void generate()}>{submitting ? <LoaderCircle className="spin" /> : <Film />}{submitting ? '正在提交…' : '生成视频'}</button></FixedAction>
+    <FixedAction><div className="price-hint"><span>{plan ? '使用当前专业分镜生成 15 秒成片' : '直接使用剧情描述生成 15 秒成片'}</span><strong>15 Soul币</strong></div><button className="primary-wide" disabled={script.trim().length < 6 || submitting || capacity?.status === 'overflow'} onClick={() => void generate()}>{submitting ? <LoaderCircle className="spin" /> : <Film />}{submitting ? '正在提交…' : '生成视频'}</button></FixedAction>
   </MobilePage>;
 }
 
