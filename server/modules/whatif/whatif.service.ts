@@ -937,9 +937,14 @@ export class WhatifService {
     }));
     const previous = await this.previousScene(ownerId, body.parentSceneId ? String(body.parentSceneId) : undefined);
     const inheritPreviousLastFrame = Boolean(previous && body.inheritPreviousLastFrame !== false);
-    const previousLastFrame = inheritPreviousLastFrame && previous
-      ? await this.previousLastFrameReference(ownerId, previous.id)
-      : null;
+    let previousLastFrame: { url: string; path: string; taskId: string } | null = null;
+    if (inheritPreviousLastFrame && previous) {
+      try {
+        previousLastFrame = await this.previousLastFrameReference(ownerId, previous.id);
+      } catch (error) {
+        this.logger.warn(`previous last frame unavailable: ${error instanceof Error ? error.message : error}`);
+      }
+    }
     if (inheritPreviousLastFrame && !previousLastFrame) this.fail('PREVIOUS_LAST_FRAME_UNAVAILABLE', '上一幕最后一帧暂时不可用，请取消继承后重试', 422);
     const hasProfessionalPlan = Boolean(body.directorPlan && Array.isArray(body.directorPlan.shots));
     const directionInput = { script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous };
