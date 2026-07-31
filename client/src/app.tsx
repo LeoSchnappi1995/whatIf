@@ -9,6 +9,7 @@ import {
   AdvancedPage,
   CharacterEditorPage,
   CharacterListPage,
+  SeedanceCharacterAssetPage,
   FriendCharacterPage,
   GenerationPage,
   InvitationLandingPage,
@@ -33,6 +34,7 @@ const RoutesComponent = () => {
         <Route path="story-drafts/:draftId/advanced" element={<AdvancedPage />} />
         <Route path="story-drafts/:draftId/invite" element={<InviteFriendsPage />} />
         <Route path="characters" element={<CharacterListPage />} />
+        <Route path="characters/seedance/new" element={<SeedanceCharacterAssetPage />} />
         <Route path="characters/new" element={<CharacterEditorPage />} />
         <Route path="characters/:characterId" element={<CharacterEditorPage />} />
         <Route path="worldviews/new" element={<WorldviewEditorPage />} />

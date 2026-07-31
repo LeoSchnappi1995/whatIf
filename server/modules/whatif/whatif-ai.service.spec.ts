@@ -55,7 +55,7 @@ describe('WhatifAiService Seedance compiler', () => {
 
     expect(plan.summary).toContain('顾言把保存多年的信递给她');
     expect(plan.shots).toHaveLength(3);
-    expect(plan.promptVersion).toBe('story-direct-v1');
+    expect(plan.promptVersion).toBe('story-direct-v2');
   });
 
   it('compiles a direct Seedance prompt from user script without the text model', () => {
@@ -73,7 +73,7 @@ describe('WhatifAiService Seedance compiler', () => {
 
     expect(result.prompt).toContain('@图片1：林夏的人物身份参考');
     expect(result.prompt).toContain('顾言把保存多年的信递给她');
-    expect(result.promptVersion).toBe('seedance-direct-v1');
+    expect(result.promptVersion).toBe('seedance-direct-v2');
   });
 
   it('binds numbered reference assets into both compiler input and final Seedance prompt', async () => {
@@ -102,7 +102,37 @@ describe('WhatifAiService Seedance compiler', () => {
       { token: '@图片1', role: 'reference_image', purpose: '林夏的人物身份参考' },
       { token: '@图片2', role: 'reference_image', purpose: '旧书店的世界与场景美术参考' },
     ]);
-    expect(result.promptVersion).toBe('seedance-compiler-v3');
+    expect(result.promptVersion).toBe('seedance-compiler-v4');
+  });
+
+  it('writes per-shot cast permissions and keeps excluded characters out of a solo shot', () => {
+    const service = new WhatifAiService();
+    const result = service.compileSeedanceDirect({
+      userScript: '林夏和顾言在 Soul 相认。',
+      characters: [{ name: '林夏' }, { name: '顾言' }],
+      directorPlan: {
+        summary: '林夏和顾言在 Soul 相认。',
+        shots: [{
+          time: '10-15秒',
+          visibleCharacters: ['顾言'],
+          screenOnlyCharacters: [],
+          excludedCharacters: ['林夏'],
+          stateIn: '顾言刚看清匹配对象的姓名。',
+          action: '顾言独自坐在窗边，手指停在手机屏幕上，低声念出林夏的名字。',
+          stateOut: '顾言仍独自在画面中，确认对方是多年未见的好友。',
+          camera: '顾言单人近景。',
+          sound: '雨声和顾言的呼吸。',
+          dialogue: '林夏？',
+          speaker: '顾言',
+          emotion: '震惊后确认',
+        }],
+      },
+    });
+
+    expect(result.promptBody).toContain('ONLY 顾言 is physically visible in this shot.');
+    expect(result.promptBody).toContain('Must not appear in any form: 林夏.');
+    expect(result.promptBody).toContain('phone avatar');
+    expect(result.negativePrompt).toContain('character in phone screen without permission');
   });
 
   it('renumbers prompt bindings when Seedance rejects one reference image', async () => {

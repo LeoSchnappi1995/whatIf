@@ -1045,6 +1045,185 @@
   width: 15px;
   color: #adb4b5;
 }
+.seedance-character-entry {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 15px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(87, 93, 224, 0.2);
+  border-radius: 20px;
+  background: linear-gradient(135deg, #f2f6ff 0%, #faf5ff 58%, #effcfb 100%);
+  box-shadow: 0 10px 28px rgba(73, 80, 172, 0.08);
+}
+.seedance-character-entry > span {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 15px;
+  color: #fff;
+  background: linear-gradient(135deg, #3c6ff3, #8b52d0);
+}
+.seedance-character-entry > span svg {
+  width: 23px;
+}
+.seedance-character-entry div {
+  min-width: 0;
+}
+.seedance-character-entry small,
+.seedance-character-entry strong,
+.seedance-character-entry p {
+  display: block;
+}
+.seedance-character-entry small {
+  color: #6b62cb;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+}
+.seedance-character-entry strong {
+  margin-top: 3px;
+  font-size: 14px;
+}
+.seedance-character-entry p {
+  margin: 4px 0 0;
+  color: #7f898b;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.seedance-character-entry > button {
+  grid-column: 1 / -1;
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(100deg, #316de8, #7455d1);
+  font-size: 11px;
+  font-weight: 750;
+}
+.seedance-character-entry > button svg {
+  width: 14px;
+}
+.character-record-meta {
+  display: flex !important;
+  align-items: center;
+  flex-direction: row !important;
+  gap: 6px;
+}
+.character-record-meta em {
+  padding: 3px 6px;
+  border-radius: 7px;
+  color: #5c55c9;
+  background: #eeedff;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 750;
+}
+.character-record-meta i {
+  color: #11aaa5;
+}
+.seedance-character-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px;
+  margin-bottom: 13px;
+  border-radius: 20px;
+  color: #fff;
+  background: radial-gradient(circle at 90% 10%, rgba(119, 236, 218, 0.34), transparent 28%), linear-gradient(135deg, #243b84, #6c43a8 62%, #1f8f94);
+}
+.seedance-character-hero > svg {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.15);
+}
+.seedance-character-hero strong,
+.seedance-character-hero p {
+  display: block;
+}
+.seedance-character-hero strong {
+  font-size: 13px;
+}
+.seedance-character-hero p {
+  margin: 4px 0 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 9px;
+  line-height: 1.5;
+}
+.reference-add.disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.seedance-asset-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.seedance-asset-preview .asset-tile {
+  aspect-ratio: 3 / 4;
+}
+.seedance-generation-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+.seedance-generation-progress > span {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f1;
+}
+.seedance-generation-progress > span i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #3575ee, #8a58d1, #27b7ac);
+  transition: width 0.35s ease;
+}
+.seedance-generation-progress strong {
+  font-size: 10px;
+}
+.seedance-generation-progress small {
+  color: #909899;
+  font-size: 8px;
+}
+.seedance-generation-error {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 10px;
+  margin-top: 11px;
+  border-radius: 12px;
+  color: #a34755;
+  background: #fff0f2;
+}
+.seedance-generation-error > svg {
+  width: 17px;
+  flex: 0 0 auto;
+}
+.seedance-generation-error span,
+.seedance-generation-error strong,
+.seedance-generation-error small {
+  display: block;
+}
+.seedance-generation-error strong {
+  font-size: 10px;
+}
+.seedance-generation-error small {
+  margin-top: 3px;
+  font-size: 8px;
+  line-height: 1.45;
+}
 .empty-card {
   display: flex;
   min-height: 260px;

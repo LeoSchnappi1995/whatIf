@@ -116,6 +116,9 @@ export class WhatifAiService {
         {
           time: '0-4秒',
           title: '进入事件',
+          visibleCharacters: names,
+          screenOnlyCharacters: [],
+          excludedCharacters: [],
           stateIn: openingState,
           action: `用一个明确可见的动作进入用户事件：${script}`,
           stateOut: '人物位置、视线和核心动作起点清楚建立',
@@ -128,6 +131,9 @@ export class WhatifAiService {
         {
           time: '4-10秒',
           title: '核心动作',
+          visibleCharacters: names,
+          screenOnlyCharacters: [],
+          excludedCharacters: [],
           stateIn: '承接上一段已建立的人物位置和动作起点',
           action: `连续完成用户描述的核心动作，不新增支线：${script}`,
           stateOut: '核心动作完成，事件结果即将显现',
@@ -140,6 +146,9 @@ export class WhatifAiService {
         {
           time: '10-15秒',
           title: '结果落点',
+          visibleCharacters: names,
+          screenOnlyCharacters: [],
+          excludedCharacters: [],
           stateIn: '承接核心动作完成后的角色与道具状态',
           action: `呈现用户事件的直接结果并形成清楚落点：${script}`,
           stateOut: '人物、场景和关键道具停留在可供下一幕继承的明确状态',
@@ -177,7 +186,25 @@ export class WhatifAiService {
     const directorPlan = (input.directorPlan && typeof input.directorPlan === 'object' ? input.directorPlan : {}) as Record<string, any>;
     const shots = (Array.isArray(directorPlan.shots) ? directorPlan.shots : []) as Array<Record<string, any>>;
     const characterText = characters.map((item) => `${item.name || 'Character'}: ${item.description || 'preserve the approved identity'}`).join('; ');
-    const timeline = shots.map((shot) => `${shot.time || ''} ${shot.action || ''} Camera: ${shot.camera || ''} Sound: ${shot.sound || ''}`).join('\n');
+    const timeline = shots.map((shot, index) => {
+      const visible = Array.isArray(shot.visibleCharacters) ? shot.visibleCharacters.map(String).filter(Boolean) : [];
+      const screenOnly = Array.isArray(shot.screenOnlyCharacters) ? shot.screenOnlyCharacters.map(String).filter(Boolean) : [];
+      const excluded = Array.isArray(shot.excludedCharacters) ? shot.excludedCharacters.map(String).filter(Boolean) : [];
+      return [
+        `[Shot ${index + 1} | ${shot.time || ''}]`,
+        `Physical on-screen cast: ${visible.length ? visible.join(', ') : 'no physical character'}.`,
+        `Screen-only cast: ${screenOnly.length ? screenOnly.join(', ') : 'none'}.`,
+        `Must not appear in any form: ${excluded.length ? excluded.join(', ') : 'none'}.`,
+        visible.length === 1 ? `ONLY ${visible[0]} is physically visible in this shot.` : '',
+        `Start state: ${shot.stateIn || ''}`,
+        `Visible action: ${shot.action || ''}`,
+        `End state: ${shot.stateOut || ''}`,
+        `Camera and edit: ${shot.camera || ''}`,
+        `Performance: ${shot.emotion || ''}`,
+        `Dialogue: ${shot.speaker ? `${shot.speaker}: ` : ''}${shot.dialogue || 'none'}`,
+        `Sound: ${shot.sound || ''}`,
+      ].filter(Boolean).join('\n');
+    }).join('\n\n');
     const compiledPrompt = [
       'Create one continuous 15-second cinematic vertical video, 9:16, 720p, with synchronized native audio.',
       `User story intent — follow this literally and do not add another event: ${script}`,
@@ -187,6 +214,8 @@ export class WhatifAiService {
       `15-second timeline:\n${timeline}`,
       'Keep one location and one causally connected event. Every action must visibly continue from the previous state; avoid montage, slideshow pacing, static posing, excessive slow motion, or trailer-like fragments.',
       'Lock every referenced identity to its own numbered image. Preserve character count, face, hairstyle, age, body proportion, costume continuity, world style, prop state, screen direction, and spatial relationship.',
+      'The global Characters list defines reusable identity assets only. It does not mean every listed character appears in every shot. Obey the cast list and exclusions written inside each shot exactly.',
+      'A character listed under Must not appear cannot appear as a body, face, background extra, reflection, photo, phone avatar, display image, or automatically completed edge-of-frame figure.',
       'Use only dialogue explicitly written by the user. Do not add subtitles, captions, logos, watermarks, split screens, collages, or extra people.',
     ].join('\n');
     const prompt = referenceAssets.length
@@ -200,7 +229,7 @@ export class WhatifAiService {
       prompt,
       promptBody: compiledPrompt,
       textOnlyPrompt,
-      negativePrompt: 'identity drift, face swap, extra people, character fusion, costume change, malformed anatomy, duplicated limbs, deformed hands, prop mutation, inconsistent background, montage, slideshow, static posing, excessive slow motion, subtitles, captions, logo, watermark, split screen, collage',
+      negativePrompt: 'identity drift, face swap, extra people, unlisted cast, excluded character appearing, offscreen character returning, background doubles, character in reflection, character in phone screen without permission, character fusion, costume change, malformed anatomy, duplicated limbs, deformed hands, prop mutation, inconsistent background, montage, slideshow, static posing, excessive slow motion, subtitles, captions, logo, watermark, split screen, collage',
       referencePlan: referenceAssets,
       promptVersion: PROMPT_VERSIONS.seedanceDirect,
     };
@@ -435,24 +464,46 @@ export class WhatifAiService {
     return { imageUrl, traceId, promptVersion: 'worldview-asset-v2' };
   }
 
-  async directScene(input: Record<string, unknown>) {
-    try {
-      const result: any = await this.textJson(
-        renderPrompt(STORY_DIRECTOR_PROMPT, { INPUT_JSON: JSON.stringify(input) }),
-        0.45,
-        { timeoutMs: 12_000, allowProviderFallback: false, gatewayAttempts: 1 },
-      );
-      const shots = Array.isArray(result?.shots) ? result.shots.slice(0, 4) : [];
-      if (shots.length < 2) throw this.codedError('DIRECTOR_INVALID_RESPONSE', 'AI 分镜不完整，请重新生成', 502);
-      return {
-        ...result,
-        shots,
-        promptVersion: PROMPT_VERSIONS.storyDirector,
-      };
-    } catch (error) {
-      this.logger.warn(`Professional director model failed; using direct scene fallback. reason=${error instanceof Error ? error.message : error}`);
-      return this.directScenePlan(input);
+  normalizeDirectorPlan(plan: Record<string, any>, characters: Array<Record<string, any>>): Record<string, any> {
+    const characterNames = characters.map((item) => String(item.name || '').trim()).filter(Boolean);
+    const shots = (Array.isArray(plan?.shots) ? plan.shots : []).slice(0, 4).map((shot: Record<string, any>) => {
+      const shotText = [shot.stateIn, shot.action, shot.stateOut, shot.dialogue, shot.speaker]
+        .map((value) => String(value || ''))
+        .join(' ');
+      const suppliedVisible = Array.isArray(shot.visibleCharacters) ? shot.visibleCharacters.map(String) : [];
+      const suppliedScreenOnly = Array.isArray(shot.screenOnlyCharacters) ? shot.screenOnlyCharacters.map(String) : [];
+      const visibleCharacters = characterNames.filter((name) => suppliedVisible.includes(name) || (!suppliedVisible.length && shotText.includes(name)));
+      const screenOnlyCharacters = characterNames.filter((name) => suppliedScreenOnly.includes(name) && !visibleCharacters.includes(name));
+      const suppliedExcluded = Array.isArray(shot.excludedCharacters) ? shot.excludedCharacters.map(String) : [];
+      const excludedCharacters = characterNames.filter((name) => (
+        suppliedExcluded.includes(name)
+        || (!visibleCharacters.includes(name) && !screenOnlyCharacters.includes(name))
+      ));
+      return { ...shot, visibleCharacters, screenOnlyCharacters, excludedCharacters };
+    });
+    if (shots.length < 2) throw this.codedError('DIRECTOR_INVALID_RESPONSE', 'AI 分镜不完整，请重新生成', 502);
+    const actions = shots.map((shot: Record<string, any>) => String(shot.action || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (actions.length !== shots.length || new Set(actions).size !== actions.length) {
+      throw this.codedError('DIRECTOR_REPEATED_ACTION', 'AI 分镜没有拆成不同的连续动作，请重新生成', 502);
     }
+    if (shots.some((shot: Record<string, any>) => !shot.visibleCharacters.length && !shot.screenOnlyCharacters.length)) {
+      throw this.codedError('DIRECTOR_CAST_MISSING', 'AI 分镜缺少逐镜头出镜人物，请重新生成', 502);
+    }
+    return { ...plan, shots };
+  }
+
+  async directScene(input: Record<string, unknown>): Promise<Record<string, any>> {
+    const result: any = await this.textJson(
+      renderPrompt(STORY_DIRECTOR_PROMPT, { INPUT_JSON: JSON.stringify(input) }),
+      0.45,
+      { timeoutMs: 45_000, allowProviderFallback: true, gatewayAttempts: 3 },
+    );
+    const characters = (Array.isArray(input.characters) ? input.characters : []) as Array<Record<string, any>>;
+    const normalized = this.normalizeDirectorPlan(result, characters);
+    return {
+      ...normalized,
+      promptVersion: PROMPT_VERSIONS.storyDirector,
+    };
   }
 
   buildDirectScene(input: Record<string, unknown>) {
@@ -478,7 +529,7 @@ export class WhatifAiService {
           INPUT_JSON: JSON.stringify(input),
         }),
         0.2,
-        { timeoutMs: 12_000, allowProviderFallback: false, gatewayAttempts: 1 },
+        { timeoutMs: 45_000, allowProviderFallback: true, gatewayAttempts: 3 },
       );
     } catch (error) {
       this.logger.warn(`Seedance compiler model failed; using deterministic compiler. reason=${error instanceof Error ? error.message : error}`);

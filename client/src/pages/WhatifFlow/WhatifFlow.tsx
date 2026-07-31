@@ -291,8 +291,143 @@ export function CharacterListPage() {
   return <MobilePage title="我的角色" eyebrow="永久人物资产" action={<button onClick={() => navigate('/characters/new')}><Plus size={20} /></button>}>
     {!data && !error && <LoadingState />}
     {error && <ErrorState message={error} retry={load} />}
-    {data && <div className="record-list">{data.items.length ? data.items.map((item: Json) => <button className="record-card character-record" key={item.characterId} onClick={() => navigate(`/characters/${item.characterId}`)}><img src={mediaUrl(item.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{item.name}</strong><small>{item.summary}</small><i>{item.selectable ? '可用于生成' : item.unavailableReason}</i></span><ChevronRight /></button>) : <div className="empty-card"><Users /><strong>还没有角色</strong><p>创建“故事里的我”或新的虚构角色</p></div>}</div>}
+    <section className="seedance-character-entry">
+      <span><WandSparkles /></span>
+      <div><small>SEEDANCE READY</small><strong>一键生成人物资产</strong><p>上传照片，AI 自动生成身份脸和正面全身，完成后直接加入人物列表。</p></div>
+      <button type="button" onClick={() => navigate('/characters/seedance/new')}>开始生成<ChevronRight /></button>
+    </section>
+    {data && <div className="record-list">{data.items.length ? data.items.map((item: Json) => <button className="record-card character-record" key={item.characterId} onClick={() => navigate(`/characters/${item.characterId}`)}><img src={mediaUrl(item.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{item.name}</strong><small>{item.summary}</small><span className="character-record-meta">{item.sourceType === 'seedance_asset' && <em>Seedance角色资产</em>}<i>{item.selectable ? '可用于生成' : item.unavailableReason}</i></span></span><ChevronRight /></button>) : <div className="empty-card"><Users /><strong>还没有角色</strong><p>创建“故事里的我”或新的虚构角色</p></div>}</div>}
     <FixedAction><button className="primary-wide" onClick={() => navigate('/characters/new')}><Plus />创建新角色</button></FixedAction>
+  </MobilePage>;
+}
+
+export function SeedanceCharacterAssetPage() {
+  const navigate = useNavigate();
+  const [name, setName] = useState('林夏');
+  const [description, setDescription] = useState('25岁，黑色长发，鹅蛋脸，身材高挑，气质温柔坚定。');
+  const [isSelf, setIsSelf] = useState(true);
+  const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [characterId, setCharacterId] = useState('');
+  const [identityAsset, setIdentityAsset] = useState<Json | null>(null);
+  const [bodyAsset, setBodyAsset] = useState<Json | null>(null);
+  const [stage, setStage] = useState<'idle' | 'profile' | 'identity' | 'body' | 'confirm'>('idle');
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+
+  const upload = async (files: FileList | null) => {
+    if (!files?.length || generating) return;
+    const chosen = Array.from(files).slice(0, Math.max(0, 4 - referenceImages.length));
+    try {
+      const uploaded = await Promise.all(chosen.map(uploadWhatifImage));
+      setReferenceImages((old) => [...old, ...uploaded.map((item) => item.url)].slice(0, 4));
+      setError('');
+    } catch (uploadError) {
+      setError(errorMessage(uploadError));
+    }
+  };
+
+  const stageCopy = stage === 'profile' ? '正在创建人物档案'
+    : stage === 'identity' ? '正在生成稳定身份脸'
+      : stage === 'body' ? '正在生成正面全身形象'
+        : stage === 'confirm' ? '正在加入人物列表'
+          : '准备生成';
+  const progress = stage === 'profile' ? 12 : stage === 'identity' ? 38 : stage === 'body' ? 76 : stage === 'confirm' ? 94 : 0;
+
+  const generate = async () => {
+    if (generating) return;
+    if (!name.trim()) return toast('先给角色起一个名字');
+    if (!referenceImages.length) return toast('请先上传至少一张人物参考照片');
+    setGenerating(true);
+    setError('');
+    try {
+      let id = characterId;
+      if (!id) {
+        setStage('profile');
+        const created = await whatifRequest<{ characterId: string }>('/api/characters', {
+          method: 'POST',
+          data: { name: name.trim(), description: description.trim(), isSelf, visibility: 'private', sourceType: 'seedance_asset' },
+        });
+        id = created.characterId;
+        setCharacterId(id);
+      }
+
+      let identity = identityAsset;
+      if (!identity) {
+        setStage('identity');
+        identity = await whatifRequest<Json>('/api/character-assets/tasks', {
+          method: 'POST',
+          data: {
+            characterId: id,
+            kind: 'identity-face',
+            instruction: '保持人物身份、五官、发型和年龄特征不变，生成自然清晰的正面身份脸。',
+            referenceImages,
+            previousAsset: '',
+          },
+        });
+        setIdentityAsset(identity);
+      }
+
+      let body = bodyAsset;
+      if (!body) {
+        setStage('body');
+        body = await whatifRequest<Json>('/api/character-assets/tasks', {
+          method: 'POST',
+          data: {
+            characterId: id,
+            kind: 'body-front',
+            instruction: '严格继承已生成的身份脸，生成从头到脚完整入画的正面全身标准人物资产。',
+            referenceImages,
+            previousAsset: identity.imageUrl,
+          },
+        });
+        setBodyAsset(body);
+      }
+
+      setStage('confirm');
+      await whatifRequest(`/api/characters/${id}/confirm-assets`, {
+        method: 'POST',
+        data: { assetIds: [identity.assetId, body.assetId] },
+      });
+      toast.success('Seedance角色资产已加入人物列表');
+      navigate('/characters', { replace: true });
+    } catch (generationError) {
+      setError(errorMessage(generationError));
+      toast.error('人物资产没有生成完成，已保留成功步骤');
+    } finally {
+      setGenerating(false);
+      setStage('idle');
+    }
+  };
+
+  return <MobilePage title="生成Seedance角色资产" eyebrow="一键人物资产" className="seedance-character-page" onBack={() => navigate('/characters', { replace: true })}>
+    <section className="seedance-character-hero"><WandSparkles /><div><strong>上传照片，其余交给 AI</strong><p>系统会自动完成身份提炼、身份脸、正面全身和人物入库。</p></div></section>
+
+    <section className="flow-card character-basic">
+      <label>角色名称<input value={name} maxLength={20} disabled={generating || Boolean(characterId)} onChange={(event) => setName(event.target.value)} placeholder="给角色起个名字" /></label>
+      <label>人物描写<textarea value={description} maxLength={500} disabled={generating || Boolean(characterId)} onChange={(event) => setDescription(event.target.value)} placeholder="外貌、气质和长期稳定特征" /></label>
+      <button className={`self-toggle ${isSelf ? 'active' : ''}`} disabled={generating || Boolean(characterId)} type="button" onClick={() => setIsSelf(!isSelf)}><i>{isSelf && <Check size={12} />}</i><span><strong>设为故事里的我</strong><small>关闭后会作为独立故事角色加入人物库</small></span></button>
+    </section>
+
+    <section className="flow-section">
+      <div className="flow-section-title"><div><strong>人物参考照片</strong><small>至少1张清晰正脸，最多上传4张</small></div><span>{referenceImages.length}/4</span></div>
+      <div className="reference-strip">
+        {referenceImages.map((url, index) => <button key={url} disabled={generating || Boolean(characterId)} onClick={() => setReferenceImages((old) => old.filter((_, itemIndex) => itemIndex !== index))}><img src={url} /><i>×</i></button>)}
+        {referenceImages.length < 4 && <label className={`reference-add ${generating || characterId ? 'disabled' : ''}`}><ImagePlus /><span>添加照片</span><input hidden disabled={generating || Boolean(characterId)} type="file" accept="image/*" multiple onChange={(event) => void upload(event.target.files)} /></label>}
+      </div>
+      <p className="helper-copy">优先上传无遮挡正脸；补充全身或侧面照片能提高身材与发型稳定性。</p>
+    </section>
+
+    {(generating || identityAsset || bodyAsset || error) && <section className="flow-section seedance-generation-result">
+      <div className="flow-section-title"><div><strong>生成结果</strong><small>{generating ? stageCopy : error ? '可从失败步骤继续生成' : '已完成的图片会被保留'}</small></div></div>
+      <div className="seedance-asset-preview">
+        <AssetTile asset={identityAsset ? { ...identityAsset, kind: 'identity-face' } : { kind: 'identity-face' }} />
+        <AssetTile asset={bodyAsset ? { ...bodyAsset, kind: 'body-front' } : { kind: 'body-front' }} />
+      </div>
+      {generating && <div className="seedance-generation-progress"><span><i style={{ width: `${progress}%` }} /></span><strong>{stageCopy}</strong><small>{progress}% · 请保持页面打开</small></div>}
+      {error && <div className="seedance-generation-error"><CircleAlert /><span><strong>这次没有全部完成</strong><small>{error}</small></span></div>}
+    </section>}
+
+    <FixedAction><button className="primary-wide" disabled={generating || !name.trim() || !referenceImages.length} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? stageCopy : error || identityAsset || bodyAsset ? '继续生成并加入人物列表' : '生成并加入人物列表'}</button></FixedAction>
   </MobilePage>;
 }
 

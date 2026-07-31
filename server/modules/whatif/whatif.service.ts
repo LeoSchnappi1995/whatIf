@@ -418,7 +418,7 @@ export class WhatifService {
         summary: `${row.isSelf ? '故事里的我 · ' : ''}${row.description.slice(0, 18) || '我的角色'}`,
         description: row.description,
         sourceType: row.sourceType,
-        badges: row.isSelf ? ['我'] : ['我的'],
+        badges: row.isSelf ? ['我'] : row.sourceType === 'seedance_asset' ? ['Seedance角色资产'] : ['我的'],
         selectable: row.status === 'active' && Boolean(row.masterAssetId),
         unavailableReason: row.status === 'active' && row.masterAssetId ? '' : '需先确认身份脸与全身形象',
         authorizationStatus: 'not_required',
@@ -528,10 +528,11 @@ export class WhatifService {
     const name = String(body.name || '').trim();
     if (!name) this.fail('CHARACTER_NAME_REQUIRED', '请输入角色名称');
     const id = String(body.characterId || this.id('character'));
+    const sourceType = body.sourceType === 'seedance_asset' ? 'seedance_asset' : 'custom';
     if (body.isSelf) await this.db.update(whatifCharacters).set({ isSelf: false, updatedAt: new Date() }).where(and(eq(whatifCharacters.ownerId, ownerId), eq(whatifCharacters.isSelf, true)));
     const [existing] = await this.db.select().from(whatifCharacters).where(and(eq(whatifCharacters.id, id), eq(whatifCharacters.ownerId, ownerId))).limit(1);
     if (existing) await this.db.update(whatifCharacters).set({ name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', currentVersion: existing.currentVersion + 1, updatedAt: new Date() }).where(eq(whatifCharacters.id, id));
-    else await this.db.insert(whatifCharacters).values({ id, ownerId, name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', sourceType: 'custom', status: 'draft' });
+    else await this.db.insert(whatifCharacters).values({ id, ownerId, name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', sourceType, status: 'draft' });
     return { characterId: id, traceId: this.traceId() };
   }
 
@@ -780,7 +781,12 @@ export class WhatifService {
     const previous = await this.previousScene(ownerId, body.parentSceneId ? String(body.parentSceneId) : undefined);
     const hasProfessionalPlan = Boolean(body.directorPlan && Array.isArray(body.directorPlan.shots));
     const directionInput = { script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous };
-    const directorPlan = hasProfessionalPlan ? body.directorPlan : this.ai.buildDirectScene(directionInput);
+    // The storyboard preview is optional, but the professional directing step is not.
+    // When the user skips preview, complete the same director workflow in the background
+    // instead of sending a repeated three-beat placeholder to Seedance.
+    const directorPlan = hasProfessionalPlan
+      ? this.ai.normalizeDirectorPlan(body.directorPlan, context.casts)
+      : await this.ai.directScene(directionInput);
     if (directorPlan.capacity?.status === 'overflow' && body.force !== true) this.fail('SCENE_CAPACITY_OVERFLOW', directorPlan.capacity.message || '这一幕超过 15 秒，请缩短或拆成两幕', 422, { suggestedScript: directorPlan.capacity.suggestedScript });
     const referenceAssets = await this.referenceAssetsFromSnapshots(context.casts, context.worldview);
     const compilationInput = {
@@ -791,9 +797,7 @@ export class WhatifService {
       userScript: script,
       referenceAssets: referenceAssets.map(({ token, role, purpose }) => ({ token, role, purpose })),
     };
-    const compilation = hasProfessionalPlan
-      ? await this.ai.compileSeedance(compilationInput)
-      : this.ai.compileSeedanceDirect(compilationInput);
+    const compilation = await this.ai.compileSeedance(compilationInput);
     const requestedBranchId = body.branchId ? String(body.branchId) : undefined;
     const { story, branch } = await this.ensureStory(ownerId, draftId, requestedBranchId);
     const scenes = await this.db.select().from(whatifScenes).where(and(eq(whatifScenes.storyId, story.id), eq(whatifScenes.branchId, branch.id)));
@@ -814,7 +818,7 @@ export class WhatifService {
         characters: context.casts,
         previous,
         directorPlan,
-        directionMode: hasProfessionalPlan ? 'professional_storyboard' : 'direct_user_script',
+        directionMode: hasProfessionalPlan ? 'approved_professional_storyboard' : 'auto_professional_storyboard',
       },
       compilation,
       referenceAssets,
