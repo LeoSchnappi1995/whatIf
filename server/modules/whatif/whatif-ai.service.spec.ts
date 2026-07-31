@@ -129,6 +129,32 @@ describe('WhatifAiService image provider fallback', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('falls back to Ark when the image gateway returns access denied', async () => {
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: async () => ({ error: { code: 'AccessDenied', message: 'access denied' } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ url: 'https://cdn.example.com/asset-from-ark.png' }] }),
+      } as Response);
+
+    const result = await service.generateCharacterAsset({
+      name: '林夏',
+      description: '黑色长发，成人，正面清晰',
+      kind: 'identity-face',
+      referenceImages: ['https://cdn.example.com/input.png'],
+    });
+
+    expect(result.provider).toBe('volcengine-ark');
+    expect(result.imageUrl).toBe('https://cdn.example.com/asset-from-ark.png');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('WhatifAiService Seedance compiler', () => {
