@@ -54,8 +54,9 @@ describe('WhatifAiService Seedance compiler', () => {
     });
 
     expect(plan.summary).toContain('顾言把保存多年的信递给她');
-    expect(plan.shots).toHaveLength(3);
-    expect(plan.promptVersion).toBe('story-direct-v2');
+    expect(plan.shots).toHaveLength(1);
+    expect(plan.shots[0].action).toBe('林夏在雨夜认出顾言，顾言把保存多年的信递给她。');
+    expect(plan.promptVersion).toBe('story-direct-v3');
   });
 
   it('compiles a direct Seedance prompt from user script without the text model', () => {
@@ -73,7 +74,7 @@ describe('WhatifAiService Seedance compiler', () => {
 
     expect(result.prompt).toContain('@图片1：林夏的人物身份参考');
     expect(result.prompt).toContain('顾言把保存多年的信递给她');
-    expect(result.promptVersion).toBe('seedance-direct-v2');
+    expect(result.promptVersion).toBe('seedance-direct-v3');
   });
 
   it('binds numbered reference assets into both compiler input and final Seedance prompt', async () => {
@@ -102,7 +103,7 @@ describe('WhatifAiService Seedance compiler', () => {
       { token: '@图片1', role: 'reference_image', purpose: '林夏的人物身份参考' },
       { token: '@图片2', role: 'reference_image', purpose: '旧书店的世界与场景美术参考' },
     ]);
-    expect(result.promptVersion).toBe('seedance-compiler-v4');
+    expect(result.promptVersion).toBe('seedance-compiler-v5');
   });
 
   it('writes per-shot cast permissions and keeps excluded characters out of a solo shot', () => {

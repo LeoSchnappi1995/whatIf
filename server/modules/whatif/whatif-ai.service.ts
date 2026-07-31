@@ -76,6 +76,9 @@ export class WhatifAiService {
     const characters = (Array.isArray(input.characters) ? input.characters : []) as Array<Record<string, any>>;
     const previous = (input.previous && typeof input.previous === 'object' ? input.previous : null) as Record<string, any> | null;
     const names = characters.map((item) => String(item.name || '')).filter(Boolean);
+    const visibleNames = names.filter((name) => script.includes(name));
+    const shotCharacters = visibleNames.length ? visibleNames : names;
+    const excludedCharacters = names.filter((name) => !shotCharacters.includes(name));
     const setting = String(
       story.setting
       || story.worldview?.description
@@ -110,53 +113,23 @@ export class WhatifAiService {
         ambience: '与主场景一致的连续环境音',
         music: '低音量电影配乐，只服务情绪转折，不盖过动作和对白',
         mix: '对白和关键动作优先，环境音其次，音乐最低',
-        durationPlan: '0-4秒建立事件，4-10秒完成核心动作，10-15秒呈现结果与情绪落点',
+        durationPlan: '用一个连续可见的动作完成用户描述，镜头节奏自然控制在约15秒内',
       },
       shots: [
         {
-          time: '0-4秒',
-          title: '进入事件',
-          visibleCharacters: names,
+          time: '约15秒连续镜头',
+          title: '用户剧情',
+          visibleCharacters: shotCharacters,
           screenOnlyCharacters: [],
-          excludedCharacters: [],
+          excludedCharacters,
           stateIn: openingState,
-          action: `用一个明确可见的动作进入用户事件：${script}`,
-          stateOut: '人物位置、视线和核心动作起点清楚建立',
-          camera: '9:16竖屏中景，眼平机位，克制跟拍，不使用静态慢推',
-          sound: '连续环境音与动作起音',
+          action: script,
+          stateOut: '用户描述的事件完成，人物、道具与场景停留在可供下一幕继承的明确状态',
+          camera: '9:16竖屏，以一次连续、可执行的摄影调度跟随核心动作；不使用蒙太奇、重复动作或静态慢推',
+          sound: '与场景一致的连续环境音、动作音和用户明确写出的对白',
           dialogue: '',
           speaker: '',
-          emotion: '自然进入事件',
-        },
-        {
-          time: '4-10秒',
-          title: '核心动作',
-          visibleCharacters: names,
-          screenOnlyCharacters: [],
-          excludedCharacters: [],
-          stateIn: '承接上一段已建立的人物位置和动作起点',
-          action: `连续完成用户描述的核心动作，不新增支线：${script}`,
-          stateOut: '核心动作完成，事件结果即将显现',
-          camera: '中近景跟随核心动作移动，在动作匹配点自然切换景别',
-          sound: '突出关键动作音；仅保留用户明确写出的对白',
-          dialogue: '',
-          speaker: '',
-          emotion: '情绪随动作自然推进',
-        },
-        {
-          time: '10-15秒',
-          title: '结果落点',
-          visibleCharacters: names,
-          screenOnlyCharacters: [],
-          excludedCharacters: [],
-          stateIn: '承接核心动作完成后的角色与道具状态',
-          action: `呈现用户事件的直接结果并形成清楚落点：${script}`,
-          stateOut: '人物、场景和关键道具停留在可供下一幕继承的明确状态',
-          camera: '近景或双人中近景，以结果为视觉中心，结尾保留约0.5秒余量',
-          sound: '动作尾音、自然呼吸与低音量情绪音乐收束',
-          dialogue: '',
-          speaker: '',
-          emotion: '完成用户指定的情绪方向',
+          emotion: '严格继承用户描述的情绪方向，用身体动作、表情和反应外化',
         },
       ],
       continuityOut: {
@@ -238,13 +211,23 @@ export class WhatifAiService {
   private async textJson(
     prompt: string,
     temperature = 0.55,
-    options?: { timeoutMs?: number; allowProviderFallback?: boolean; gatewayAttempts?: number },
+    options?: {
+      timeoutMs?: number;
+      gatewayTimeoutMs?: number;
+      fallbackTimeoutMs?: number;
+      allowProviderFallback?: boolean;
+      gatewayAttempts?: number;
+      maxTokens?: number;
+    },
   ) {
     const gatewayReady = Boolean(this.textGatewayBase && this.textGatewayToken && this.textGatewayModel);
     const deepseekReady = Boolean(this.deepseekKey);
     const timeoutMs = options?.timeoutMs ?? 45_000;
     const allowProviderFallback = options?.allowProviderFallback ?? true;
-    const gatewayAttempts = Math.max(1, Math.min(3, options?.gatewayAttempts ?? 3));
+    const gatewayAttempts = Math.max(1, Math.min(3, options?.gatewayAttempts ?? 1));
+    const gatewayTimeoutMs = options?.gatewayTimeoutMs ?? Math.min(timeoutMs, 20_000);
+    const fallbackTimeoutMs = options?.fallbackTimeoutMs ?? timeoutMs;
+    const maxTokens = options?.maxTokens ?? 4_096;
     if (!gatewayReady && !deepseekReady) {
       throw this.codedError('TEXT_MODEL_NOT_CONFIGURED', '豆包文字接口尚未配置', 503);
     }
@@ -255,6 +238,7 @@ export class WhatifAiService {
       model: string,
       service?: string,
       requestTimeoutMs = timeoutMs,
+      provider = 'text_model',
     ) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -273,6 +257,8 @@ export class WhatifAiService {
             stream: false,
             temperature,
             response_format: { type: 'json_object' },
+            max_tokens: maxTokens,
+            ...(provider === 'deepseek' ? { thinking: { type: 'disabled' } } : {}),
             messages: [{ role: 'user', content: prompt }],
           }),
         });
@@ -288,6 +274,15 @@ export class WhatifAiService {
         return this.safeJson(data?.choices?.[0]?.message?.content || '{}');
       } catch (error) {
         if (controller.signal.aborted) throw this.codedError('TEXT_MODEL_TIMEOUT', '文字模型生成超时', 504);
+        if (!(error as CodedError)?.code) {
+          const cause = (error as { cause?: { code?: string; message?: string } })?.cause;
+          throw this.codedError(
+            'TEXT_MODEL_NETWORK_ERROR',
+            `${provider === 'deepseek' ? '备用文字模型' : 'Soul 文字网关'}网络连接失败`,
+            502,
+            { provider, causeCode: cause?.code || '', causeMessage: cause?.message || String(error) },
+          );
+        }
         throw error;
       } finally {
         clearTimeout(timer);
@@ -304,6 +299,8 @@ export class WhatifAiService {
             this.textGatewayToken,
             this.textGatewayModel,
             this.textGatewayService,
+            gatewayTimeoutMs,
+            'soul_text_gateway',
           );
         } catch (error) {
           lastError = error;
@@ -319,15 +316,37 @@ export class WhatifAiService {
       if (gatewayReady) {
         return await gatewayRequest();
       }
-      return await request(`${this.deepseekBase}/chat/completions`, this.deepseekKey, this.deepseekModel);
+      return await request(
+        `${this.deepseekBase}/chat/completions`,
+        this.deepseekKey,
+        this.deepseekModel,
+        undefined,
+        fallbackTimeoutMs,
+        'deepseek',
+      );
     } catch (error) {
       if (allowProviderFallback && gatewayReady && deepseekReady && process.env.MODEL_FALLBACK_ON_ERROR === 'true') {
         this.logger.warn(`Soul text gateway failed; using configured fallback: ${error instanceof Error ? error.message : error}`);
         try {
-          return await request(`${this.deepseekBase}/chat/completions`, this.deepseekKey, this.deepseekModel);
+          return await request(
+            `${this.deepseekBase}/chat/completions`,
+            this.deepseekKey,
+            this.deepseekModel,
+            undefined,
+            fallbackTimeoutMs,
+            'deepseek',
+          );
         } catch (fallbackError) {
           this.logger.warn(`Configured text fallback also failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`);
-          throw error;
+          throw this.codedError(
+            'TEXT_MODEL_ALL_PROVIDERS_FAILED',
+            'AI 分镜服务暂时不可用，请稍后重试',
+            502,
+            {
+              primary: error instanceof Error ? error.message : String(error),
+              fallback: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            },
+          );
         }
       }
       throw error;
@@ -481,7 +500,7 @@ export class WhatifAiService {
       ));
       return { ...shot, visibleCharacters, screenOnlyCharacters, excludedCharacters };
     });
-    if (shots.length < 2) throw this.codedError('DIRECTOR_INVALID_RESPONSE', 'AI 分镜不完整，请重新生成', 502);
+    if (shots.length < 1) throw this.codedError('DIRECTOR_INVALID_RESPONSE', 'AI 分镜不完整，请重新生成', 502);
     const actions = shots.map((shot: Record<string, any>) => String(shot.action || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
     if (actions.length !== shots.length || new Set(actions).size !== actions.length) {
       throw this.codedError('DIRECTOR_REPEATED_ACTION', 'AI 分镜没有拆成不同的连续动作，请重新生成', 502);
@@ -496,7 +515,14 @@ export class WhatifAiService {
     const result: any = await this.textJson(
       renderPrompt(STORY_DIRECTOR_PROMPT, { INPUT_JSON: JSON.stringify(input) }),
       0.45,
-      { timeoutMs: 45_000, allowProviderFallback: true, gatewayAttempts: 3 },
+      {
+        timeoutMs: 30_000,
+        gatewayTimeoutMs: 10_000,
+        fallbackTimeoutMs: 20_000,
+        allowProviderFallback: true,
+        gatewayAttempts: 1,
+        maxTokens: 3_000,
+      },
     );
     const characters = (Array.isArray(input.characters) ? input.characters : []) as Array<Record<string, any>>;
     const normalized = this.normalizeDirectorPlan(result, characters);
@@ -529,7 +555,14 @@ export class WhatifAiService {
           INPUT_JSON: JSON.stringify(input),
         }),
         0.2,
-        { timeoutMs: 45_000, allowProviderFallback: true, gatewayAttempts: 3 },
+        {
+          timeoutMs: 25_000,
+          gatewayTimeoutMs: 10_000,
+          fallbackTimeoutMs: 15_000,
+          allowProviderFallback: true,
+          gatewayAttempts: 1,
+          maxTokens: 3_000,
+        },
       );
     } catch (error) {
       this.logger.warn(`Seedance compiler model failed; using deterministic compiler. reason=${error instanceof Error ? error.message : error}`);
