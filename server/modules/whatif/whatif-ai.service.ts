@@ -15,6 +15,7 @@ import {
 
 type CodedError = Error & { code?: string; httpStatus?: number; details?: unknown };
 type ReferenceAssetCategory = 'character_identity' | 'character_body' | 'world_style' | 'generic';
+type ImageProviderSource = 'gateway' | 'ark';
 type SeedanceReferenceAsset = {
   url: string;
   token?: string;
@@ -75,6 +76,122 @@ export class WhatifAiService {
   private upstreamMessage(data: any, fallback: string) {
     return String(
       data?.error?.message || data?.error?.details || data?.message || data?.msg || data?.detail || fallback,
+    );
+  }
+
+  private imageGatewayReady() {
+    return this.imageGatewayEnabled && Boolean(this.imageGatewayBase && this.imageGatewayToken);
+  }
+
+  private imageProviderRequest(source: ImageProviderSource) {
+    const usingGateway = source === 'gateway';
+    const endpoint = usingGateway
+      ? `${this.imageGatewayBase}/v1/images/generations`
+      : 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
+    const token = usingGateway ? this.imageGatewayToken : this.mediaKey;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (usingGateway && this.imageGatewayService) headers['soul-ai-service'] = this.imageGatewayService;
+    return {
+      endpoint,
+      headers,
+      provider: usingGateway ? 'soul-seedream-gateway' : 'volcengine-ark',
+      size: usingGateway ? '2048x2048' : '1024x1024',
+    };
+  }
+
+  private async parseJsonResponse(response: Response) {
+    try {
+      return await response.json();
+    } catch {
+      return {};
+    }
+  }
+
+  private imageErrorDetails(error: unknown, source: ImageProviderSource) {
+    const cause = (error as { cause?: { code?: string; message?: string; name?: string } })?.cause;
+    const code = String((error as CodedError)?.code || cause?.code || '');
+    const message = String((error as Error)?.message || cause?.message || error || '');
+    return {
+      source,
+      code,
+      causeCode: cause?.code || '',
+      causeName: cause?.name || '',
+      causeMessage: cause?.message || '',
+      message,
+    };
+  }
+
+  private shouldFallbackImageGateway(error: unknown) {
+    const httpStatus = Number((error as CodedError)?.httpStatus || 0);
+    const details = this.imageErrorDetails(error, 'gateway');
+    return (
+      httpStatus === 408
+      || httpStatus === 429
+      || httpStatus >= 500
+      || /UND_ERR|fetch failed|Connect Timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket|network/i.test(
+        [details.code, details.causeCode, details.message, details.causeMessage].join(' '),
+      )
+    );
+  }
+
+  private async requestImageGeneration(
+    body: Record<string, unknown>,
+    codePrefix: string,
+    fallbackMessage: string,
+  ) {
+    const attempts: ImageProviderSource[] = this.imageGatewayReady() ? ['gateway'] : [];
+    if (!attempts.length || this.mediaKey) attempts.push('ark');
+    if (!attempts.length) throw this.codedError('IMAGE_MODEL_NOT_CONFIGURED', '豆包图片接口尚未配置', 503);
+
+    let gatewayError: unknown;
+    for (const source of attempts) {
+      const request = this.imageProviderRequest(source);
+      const traceId = randomUUID();
+      try {
+        const response = await fetch(request.endpoint, {
+          method: 'POST',
+          headers: { ...request.headers, 'x-story-trace-id': traceId },
+          body: JSON.stringify({ ...body, size: request.size }),
+        });
+        const data: any = await this.parseJsonResponse(response);
+        if (!response.ok) {
+          throw this.codedError(
+            `${codePrefix}_HTTP_${response.status}`,
+            this.upstreamMessage(data, `${fallbackMessage}：${response.status}`),
+            response.status >= 500 || response.status === 429 || response.status === 408 ? 502 : response.status,
+            data,
+          );
+        }
+        return { data, traceId, provider: request.provider, providerModel: this.imageModel };
+      } catch (error) {
+        if (source === 'gateway' && this.mediaKey && this.shouldFallbackImageGateway(error)) {
+          gatewayError = error;
+          this.logger.warn(`${fallbackMessage}网关连接失败，自动切到 Ark 直连。reason=${JSON.stringify(this.imageErrorDetails(error, source))}`);
+          continue;
+        }
+        if (!(error as CodedError)?.code) {
+          throw this.codedError(
+            `${codePrefix}_NETWORK_ERROR`,
+            `${fallbackMessage}网络连接失败，请稍后重试`,
+            502,
+            {
+              current: this.imageErrorDetails(error, source),
+              gateway: gatewayError ? this.imageErrorDetails(gatewayError, 'gateway') : undefined,
+            },
+          );
+        }
+        throw error;
+      }
+    }
+
+    throw this.codedError(
+      `${codePrefix}_NETWORK_ERROR`,
+      `${fallbackMessage}网络连接失败，请稍后重试`,
+      502,
+      gatewayError ? this.imageErrorDetails(gatewayError, 'gateway') : undefined,
     );
   }
 
@@ -397,9 +514,7 @@ export class WhatifAiService {
     referenceImages: string[];
     previousAsset?: string;
   }) {
-    const usingGateway = this.imageGatewayEnabled && Boolean(this.imageGatewayBase && this.imageGatewayToken);
-    const token = usingGateway ? this.imageGatewayToken : this.mediaKey;
-    if (!token) throw this.codedError('IMAGE_MODEL_NOT_CONFIGURED', '豆包图片接口尚未配置', 503);
+    if (!this.imageGatewayReady() && !this.mediaKey) throw this.codedError('IMAGE_MODEL_NOT_CONFIGURED', '豆包图片接口尚未配置', 503);
     const viewInstruction = CHARACTER_VIEW_INSTRUCTIONS[input.kind];
     if (!viewInstruction) throw this.codedError('UNSUPPORTED_CHARACTER_VIEW', '不支持的人物标准视图', 400);
     const images = this.validImageUrls([input.previousAsset, input.referenceImages], 4);
@@ -412,47 +527,23 @@ export class WhatifAiService {
       REFINEMENT: input.instruction || 'Keep all approved identity details unchanged.',
       VIEW_INSTRUCTION: viewInstruction,
     });
-    const endpoint = usingGateway
-      ? `${this.imageGatewayBase}/v1/images/generations`
-      : 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
-    if (usingGateway && this.imageGatewayService) headers['soul-ai-service'] = this.imageGatewayService;
-    const traceId = randomUUID();
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { ...headers, 'x-story-trace-id': traceId },
-      body: JSON.stringify({
-        model: this.imageModel,
-        prompt,
-        image: images,
-        size: usingGateway ? '2048x2048' : '1024x1024',
-        response_format: 'url',
-        sequential_image_generation: 'disabled',
-        stream: false,
-        watermark: false,
-      }),
-    });
-    const data: any = await response.json();
-    if (!response.ok) {
-      throw this.codedError(
-        `CHARACTER_IMAGE_HTTP_${response.status}`,
-        this.upstreamMessage(data, `人物图片生成失败：${response.status}`),
-        502,
-        data,
-      );
-    }
+    const result = await this.requestImageGeneration({
+      model: this.imageModel,
+      prompt,
+      image: images,
+      response_format: 'url',
+      sequential_image_generation: 'disabled',
+      stream: false,
+      watermark: false,
+    }, 'CHARACTER_IMAGE', '人物图片生成失败');
+    const data: any = result.data;
     const imageUrl = String(data?.data?.[0]?.url || data?.images?.[0]?.url || '');
     if (!imageUrl) throw this.codedError('CHARACTER_IMAGE_EMPTY_RESULT', '人物图片生成成功，但未返回图片', 502);
-    return { imageUrl, traceId, promptVersion: PROMPT_VERSIONS.characterAsset, provider: usingGateway ? 'soul-seedream-gateway' : 'volcengine-ark', providerModel: this.imageModel };
+    return { imageUrl, traceId: result.traceId, promptVersion: PROMPT_VERSIONS.characterAsset, provider: result.provider, providerModel: result.providerModel };
   }
 
   async generateSeedanceCharacterMaster(input: { name: string; description: string; sourceImage?: string }) {
-    const usingGateway = this.imageGatewayEnabled && Boolean(this.imageGatewayBase && this.imageGatewayToken);
-    const token = usingGateway ? this.imageGatewayToken : this.mediaKey;
-    if (!token) throw this.codedError('SEEDANCE_CHARACTER_PREPARATION_NOT_CONFIGURED', '人物资产认证服务尚未配置', 503);
+    if (!this.imageGatewayReady() && !this.mediaKey) throw this.codedError('SEEDANCE_CHARACTER_PREPARATION_NOT_CONFIGURED', '人物资产认证服务尚未配置', 503);
     const images = this.validImageUrls([input.sourceImage], 1);
     const prompt = renderPrompt(SEEDANCE_CHARACTER_MASTER_PROMPT, {
       NAME: input.name,
@@ -461,30 +552,20 @@ export class WhatifAiService {
         ? 'Use the supplied image only as the identity source. Preserve the same recognizable fictional face, facial proportions, hairstyle, adult age, body proportions and distinguishing features while rebuilding a clean original AIGC asset.'
         : 'No identity image is supplied. Invent one fully original adult face from the stable description. Do not resemble any real person, celebrity or copyrighted character.',
     });
-    const endpoint = usingGateway ? `${this.imageGatewayBase}/v1/images/generations` : 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-    const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-    if (usingGateway && this.imageGatewayService) headers['soul-ai-service'] = this.imageGatewayService;
-    const traceId = randomUUID();
     const requestBody: Record<string, unknown> = {
       model: this.imageModel,
       prompt,
-      size: usingGateway ? '2048x2048' : '1024x1024',
       response_format: 'url',
       sequential_image_generation: 'disabled',
       stream: false,
       watermark: false,
     };
     if (images.length) requestBody.image = images;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { ...headers, 'x-story-trace-id': traceId },
-      body: JSON.stringify(requestBody),
-    });
-    const data: any = await response.json();
-    if (!response.ok) throw this.codedError(`SEEDANCE_CHARACTER_PREPARATION_HTTP_${response.status}`, this.upstreamMessage(data, `人物资产认证失败：${response.status}`), 502, data);
+    const result = await this.requestImageGeneration(requestBody, 'SEEDANCE_CHARACTER_PREPARATION', '人物资产认证失败');
+    const data: any = result.data;
     const imageUrl = String(data?.data?.[0]?.url || data?.images?.[0]?.url || '');
     if (!imageUrl) throw this.codedError('SEEDANCE_CHARACTER_PREPARATION_EMPTY', '人物资产认证成功，但未返回图片', 502);
-    return { imageUrl, traceId, promptVersion: PROMPT_VERSIONS.seedanceCharacterMaster, provider: usingGateway ? 'soul-seedream-gateway' : 'volcengine-ark', providerModel: this.imageModel };
+    return { imageUrl, traceId: result.traceId, promptVersion: PROMPT_VERSIONS.seedanceCharacterMaster, provider: result.provider, providerModel: result.providerModel };
   }
 
   async generateWorldviewImage(input: {
@@ -493,40 +574,23 @@ export class WhatifAiService {
     instruction?: string;
     referenceImages?: string[];
   }) {
-    const usingGateway = this.imageGatewayEnabled && Boolean(this.imageGatewayBase && this.imageGatewayToken);
-    const token = usingGateway ? this.imageGatewayToken : this.mediaKey;
-    if (!token) throw this.codedError('IMAGE_MODEL_NOT_CONFIGURED', '豆包图片接口尚未配置', 503);
+    if (!this.imageGatewayReady() && !this.mediaKey) throw this.codedError('IMAGE_MODEL_NOT_CONFIGURED', '豆包图片接口尚未配置', 503);
     const references = this.validImageUrls(input.referenceImages || [], 4);
     const prompt = `Create one premium 9:16 vertical world style master image for a continuous short-video story. World name: ${input.name}. World description: ${input.description}. ${input.instruction ? `Point refinement: ${input.instruction}. Preserve every unrelated approved detail.` : ''} Show the repeatable production design: era, architecture, landscape, weather, lighting, color palette, material texture, technology or magic rules. No main character, no portrait, no collage, no split screen, no text, no logo, no watermark. The image must be a reusable style and environment reference for later Seedance video generation.`;
-    const endpoint = usingGateway
-      ? `${this.imageGatewayBase}/v1/images/generations`
-      : 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-    const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-    if (usingGateway && this.imageGatewayService) headers['soul-ai-service'] = this.imageGatewayService;
-    const traceId = randomUUID();
     const body: Record<string, unknown> = {
       model: this.imageModel,
       prompt,
-      size: usingGateway ? '2048x2048' : '1024x1024',
       response_format: 'url',
       sequential_image_generation: 'disabled',
       stream: false,
       watermark: false,
     };
     if (references.length) body.image = references;
-    const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
-    const data: any = await response.json();
-    if (!response.ok) {
-      throw this.codedError(
-        `WORLDVIEW_IMAGE_HTTP_${response.status}`,
-        this.upstreamMessage(data, `世界观图片生成失败：${response.status}`),
-        502,
-        data,
-      );
-    }
+    const result = await this.requestImageGeneration(body, 'WORLDVIEW_IMAGE', '世界观图片生成失败');
+    const data: any = result.data;
     const imageUrl = String(data?.data?.[0]?.url || data?.images?.[0]?.url || '');
     if (!imageUrl) throw this.codedError('WORLDVIEW_IMAGE_EMPTY_RESULT', '世界观图片生成成功，但未返回图片', 502);
-    return { imageUrl, traceId, promptVersion: 'worldview-asset-v2' };
+    return { imageUrl, traceId: result.traceId, promptVersion: 'worldview-asset-v2' };
   }
 
   normalizeDirectorPlan(plan: Record<string, any>, characters: Array<Record<string, any>>): Record<string, any> {

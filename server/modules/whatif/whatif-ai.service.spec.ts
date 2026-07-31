@@ -64,6 +64,73 @@ describe('WhatifAiService', () => {
   });
 });
 
+describe('WhatifAiService image provider fallback', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    process.env.IMAGE_GATEWAY_ENABLED = 'true';
+    process.env.IMAGE_GATEWAY_BASE = 'https://prod-ai-gateway.soulapp-inc.cn/doubao';
+    process.env.IMAGE_GATEWAY_TOKEN = 'gateway-token';
+    process.env.IMAGE_GATEWAY_SERVICE = 'soul-ai-ai-idol-parallel-world-image-260715';
+    process.env.RELATIONSHIP_MEDIA_API_KEY = 'ark-key';
+    process.env.RELATIONSHIP_IMAGE_MODEL = 'ep-image-model';
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.env = { ...originalEnv };
+  });
+
+  it('falls back to Ark when the image gateway connection times out', async () => {
+    const service = new WhatifAiService();
+    const timeoutError = new TypeError('fetch failed') as TypeError & { cause?: { code: string; message: string } };
+    timeoutError.cause = { code: 'UND_ERR_CONNECT_TIMEOUT', message: 'Connect Timeout Error' };
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockRejectedValueOnce(timeoutError)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ url: 'https://cdn.example.com/asset.png' }] }),
+      } as Response);
+
+    const result = await service.generateCharacterAsset({
+      name: '林夏',
+      description: '黑色长发，成人，正面清晰',
+      kind: 'identity-face',
+      referenceImages: ['https://cdn.example.com/input.png'],
+    });
+
+    expect(result.provider).toBe('volcengine-ark');
+    expect(result.imageUrl).toBe('https://cdn.example.com/asset.png');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://prod-ai-gateway.soulapp-inc.cn/doubao/v1/images/generations');
+    expect(String(fetchMock.mock.calls[1][0])).toBe('https://ark.cn-beijing.volces.com/api/v3/images/generations');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).size).toBe('2048x2048');
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).size).toBe('1024x1024');
+    expect((fetchMock.mock.calls[1][1]?.headers as Record<string, string>)['soul-ai-service']).toBeUndefined();
+  });
+
+  it('does not fallback when the image gateway rejects the request', async () => {
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: { message: 'invalid image' } }),
+      } as Response);
+
+    await expect(service.generateCharacterAsset({
+      name: '林夏',
+      description: '黑色长发，成人，正面清晰',
+      kind: 'identity-face',
+      referenceImages: ['https://cdn.example.com/input.png'],
+    })).rejects.toMatchObject({ code: 'CHARACTER_IMAGE_HTTP_400', httpStatus: 400 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('WhatifAiService Seedance compiler', () => {
   it('builds a direct user-script plan without calling the text model', () => {
     const service = new WhatifAiService();
