@@ -7,6 +7,7 @@ import {
   CHARACTER_VIEW_INSTRUCTIONS,
   PROMPT_VERSIONS,
   PUBLICATION_COPY_PROMPT,
+  SEEDANCE_CHARACTER_MASTER_PROMPT,
   SEEDANCE_COMPILER_PROMPT,
   STORY_DIRECTOR_PROMPT,
   renderPrompt,
@@ -445,7 +446,39 @@ export class WhatifAiService {
     }
     const imageUrl = String(data?.data?.[0]?.url || data?.images?.[0]?.url || '');
     if (!imageUrl) throw this.codedError('CHARACTER_IMAGE_EMPTY_RESULT', '人物图片生成成功，但未返回图片', 502);
-    return { imageUrl, traceId, promptVersion: PROMPT_VERSIONS.characterAsset };
+    return { imageUrl, traceId, promptVersion: PROMPT_VERSIONS.characterAsset, provider: usingGateway ? 'soul-seedream-gateway' : 'volcengine-ark', providerModel: this.imageModel };
+  }
+
+  async generateSeedanceCharacterMaster(input: { name: string; description: string; sourceImage: string }) {
+    const usingGateway = this.imageGatewayEnabled && Boolean(this.imageGatewayBase && this.imageGatewayToken);
+    const token = usingGateway ? this.imageGatewayToken : this.mediaKey;
+    if (!token) throw this.codedError('SEEDANCE_CHARACTER_PREPARATION_NOT_CONFIGURED', '人物资产认证服务尚未配置', 503);
+    const images = this.validImageUrls([input.sourceImage], 1);
+    if (!images.length) throw this.codedError('SEEDANCE_CHARACTER_SOURCE_REQUIRED', '人物资产缺少可用的身份参考图', 400);
+    const prompt = renderPrompt(SEEDANCE_CHARACTER_MASTER_PROMPT, { NAME: input.name, DESCRIPTION: input.description });
+    const endpoint = usingGateway ? `${this.imageGatewayBase}/v1/images/generations` : 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    if (usingGateway && this.imageGatewayService) headers['soul-ai-service'] = this.imageGatewayService;
+    const traceId = randomUUID();
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { ...headers, 'x-story-trace-id': traceId },
+      body: JSON.stringify({
+        model: this.imageModel,
+        prompt,
+        image: images,
+        size: usingGateway ? '2048x2048' : '1024x1024',
+        response_format: 'url',
+        sequential_image_generation: 'disabled',
+        stream: false,
+        watermark: false,
+      }),
+    });
+    const data: any = await response.json();
+    if (!response.ok) throw this.codedError(`SEEDANCE_CHARACTER_PREPARATION_HTTP_${response.status}`, this.upstreamMessage(data, `人物资产认证失败：${response.status}`), 502, data);
+    const imageUrl = String(data?.data?.[0]?.url || data?.images?.[0]?.url || '');
+    if (!imageUrl) throw this.codedError('SEEDANCE_CHARACTER_PREPARATION_EMPTY', '人物资产认证成功，但未返回图片', 502);
+    return { imageUrl, traceId, promptVersion: PROMPT_VERSIONS.seedanceCharacterMaster, provider: usingGateway ? 'soul-seedream-gateway' : 'volcengine-ark', providerModel: this.imageModel };
   }
 
   async generateWorldviewImage(input: {
@@ -674,7 +707,6 @@ export class WhatifAiService {
     promptBody?: string;
     referenceImages?: string[];
     referenceAssets?: SeedanceReferenceAsset[];
-    copyrightSafePrompt?: string;
     traceId?: string;
     taskId?: string;
     sceneId?: string;
@@ -804,9 +836,18 @@ export class WhatifAiService {
         role: 'reference_image',
       })),
     ];
-    const worldStyleAssets = (assets: typeof referenceAssets) => assets.filter((asset) => (
-      asset.category === 'world_style' || /世界|场景美术|画风|world style/i.test(asset.purpose)
+    const characterAssets = (assets: typeof referenceAssets) => assets.filter((asset) => (
+      asset.category === 'character_identity' || asset.category === 'character_body'
     ));
+    const throwCharacterAssetRejected = (message: string, data: unknown, asset?: (typeof referenceAssets)[number]): never => {
+      const exception = new BadGatewayException({
+        code: 'SEEDANCE_CHARACTER_ASSET_REJECTED',
+        message: `${asset?.purpose || '所选人物资产'}未通过 Seedance 人物参考校验。系统已停止生成，没有替换成陌生人；请重新生成人物资产后重试。`,
+        details: { upstreamMessage: message, rejectedAsset: asset, upstream: data },
+      });
+      (exception as BadGatewayException & { requestLog?: unknown }).requestLog = requestLog();
+      throw exception;
+    };
 
     let activeAssets = referenceAssets;
     let content: any[] = contentFor(activeAssets);
@@ -817,6 +858,8 @@ export class WhatifAiService {
       const rejectedIndex = this.rejectedContentIndex(firstError);
       const rejectedAssetIndex = rejectedIndex - 1;
       if (rejectedAssetIndex >= 0 && rejectedAssetIndex < activeAssets.length) {
+        const rejectedAsset = activeAssets[rejectedAssetIndex];
+        if (characterAssets([rejectedAsset]).length) throwCharacterAssetRejected(firstError, data, rejectedAsset);
         this.logger.warn(`Seedance rejected content[${rejectedIndex}]; retrying without that reference. reason=${firstError}`);
         activeAssets = activeAssets.filter((_, index) => index !== rejectedAssetIndex);
         content = contentFor(activeAssets);
@@ -825,25 +868,10 @@ export class WhatifAiService {
       }
     }
     const referenceRetryError = this.taskError(data);
-    if (!response.ok && referenceAssets.length && this.shouldRetryWithoutReferences(referenceRetryError || firstError)) {
-      const retainedStyleAssets = worldStyleAssets(activeAssets);
-      if (retainedStyleAssets.length && retainedStyleAssets.length < activeAssets.length) {
-        this.logger.warn(`Seedance rejected character references; retrying with world-style references preserved. reason=${referenceRetryError || firstError}`);
-        activeAssets = retainedStyleAssets;
-        content = contentFor(activeAssets);
-        inputMode = 'style_reference_fallback';
-        ({ response, data } = await submit(content, inputMode));
-      }
-    }
-    const styleRetryError = this.taskError(data);
-    if (!response.ok && referenceAssets.length && this.shouldRetryWithoutReferences(styleRetryError || referenceRetryError || firstError)) {
-      this.logger.warn(`Seedance rejected all usable reference inputs; one text-only safety retry is submitted. reason=${styleRetryError || referenceRetryError || firstError}`);
-      inputMode = 'text_only_safety_fallback';
-      ({ response, data } = await submit([
-        { type: 'text', text: JSON.stringify({
-          dynamic_caption: input.copyrightSafePrompt || remapPrompt(promptBody, referenceAssets, []),
-        }) },
-      ], inputMode));
+    if (!response.ok && characterAssets(activeAssets).length && this.shouldRetryWithoutReferences(referenceRetryError || firstError)) {
+      const rejectedIndex = this.rejectedContentIndex(referenceRetryError || firstError);
+      const rejectedAsset = rejectedIndex > 0 ? activeAssets[rejectedIndex - 1] : undefined;
+      throwCharacterAssetRejected(referenceRetryError || firstError, data, rejectedAsset && characterAssets([rejectedAsset]).length ? rejectedAsset : characterAssets(activeAssets)[0]);
     }
     if (!response.ok) {
       const message = this.taskError(data) || `Seedance 创建任务失败：${response.status}`;

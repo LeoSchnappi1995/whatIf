@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
 import { createStoryDraft, getWhatifHome, getWhatifWorks } from '@/api';
+import { resolveAppAssetUrl } from '@/lib/app-base-path';
 
 import type {
   HomeStatusCard,
@@ -147,7 +148,7 @@ function CharacterAvatars({ card }: { card: HomeStatusCard }) {
   return (
     <div className="character-avatars" aria-label="故事角色">
       {characters.map((character) => (
-        <img key={character.id} src={character.avatarUrl} alt={character.name} />
+        <img key={character.id} src={resolveAppAssetUrl(character.avatarUrl)} alt={character.name} />
       ))}
     </div>
   );
@@ -208,7 +209,7 @@ function WorkCard({ work, onOpen }: { work: WhatifWork; onOpen: () => void }) {
   return (
     <article className="work-card" onClick={onOpen}>
       <div className="work-cover">
-        <img src={work.coverUrl} alt={work.title} loading="lazy" />
+        <img src={resolveAppAssetUrl(work.coverUrl)} alt={work.title} loading="lazy" />
         <span className="mini-play" aria-hidden="true">
           <Play size={12} fill="currentColor" />
         </span>
@@ -219,7 +220,7 @@ function WorkCard({ work, onOpen }: { work: WhatifWork; onOpen: () => void }) {
         <p>{work.subtitle}</p>
         <div className="work-meta">
           <span>
-            <img src={work.avatarUrl} alt="" />
+            <img src={resolveAppAssetUrl(work.avatarUrl)} alt="" />
             {work.authorName}
           </span>
           <span>
@@ -397,11 +398,11 @@ export default function WhatifHome() {
               loop
               muted
               playsInline
-              poster={data.hero.coverUrl}
-              src={data.hero.videoUrl}
+              poster={resolveAppAssetUrl(data.hero.coverUrl)}
+              src={resolveAppAssetUrl(data.hero.videoUrl)}
             />
           ) : (
-            <img src={data.hero.coverUrl} alt={data.hero.title} />
+            <img src={resolveAppAssetUrl(data.hero.coverUrl)} alt={data.hero.title} />
           )}
           <div className="hero-shade" />
           <button
