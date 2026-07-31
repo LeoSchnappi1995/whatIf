@@ -252,6 +252,17 @@ export class WhatifService {
     return uploaded.filePath;
   }
 
+  private async archiveOptionalRemote(url: string, prefix: string, label: string) {
+    if (!url) return { path: '', warning: '' };
+    try {
+      return { path: await this.archiveRemote(url, prefix), warning: '' };
+    } catch (error) {
+      const warning = error instanceof Error ? error.message : `${label}归档失败`;
+      this.logger.warn(`${label} archive fallback: ${warning}`);
+      return { path: '', warning };
+    }
+  }
+
   private providerUrlExpiresAt(url: string) {
     try {
       const parsed = new URL(url);
@@ -692,7 +703,13 @@ export class WhatifService {
     let previous: AnyRecord | null = null;
     if (parentSceneId) {
       const [scene] = await this.db.select().from(whatifScenes).where(and(eq(whatifScenes.id, parentSceneId), eq(whatifScenes.ownerId, ownerId))).limit(1);
-      if (scene) previous = { id: scene.id, title: scene.title, summary: (scene.directorPlan as AnyRecord)?.summary, continuityOut: (scene.directorPlan as AnyRecord)?.continuityOut };
+      if (scene) previous = {
+        id: scene.id,
+        title: scene.title,
+        summary: (scene.directorPlan as AnyRecord)?.summary,
+        continuityOut: (scene.directorPlan as AnyRecord)?.continuityOut,
+        ...await this.previousSceneFrameSummary(ownerId, scene.id),
+      };
     }
     return { draftId, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship }, characters: context.casts, worldview: context.worldview, sceneDraft: context.draft.latestSceneDraft, previous, priceSob: 15, aiDefaults: ['人物本幕造型', '场景与关键道具', '专业分镜', '对白与声音', '镜头节奏'], traceId: this.traceId() };
   }
@@ -867,6 +884,46 @@ export class WhatifService {
     return scene ? { id: scene.id, title: scene.title, summary: (scene.directorPlan as AnyRecord)?.summary, continuityOut: (scene.directorPlan as AnyRecord)?.continuityOut, sequence: scene.sequence, branchId: scene.branchId } : null;
   }
 
+  private async selectedVideoTaskForScene(ownerId: string, sceneId: string) {
+    const [scene] = await this.db.select().from(whatifScenes).where(and(eq(whatifScenes.id, sceneId), eq(whatifScenes.ownerId, ownerId))).limit(1);
+    if (!scene) return null;
+    if (scene.selectedResultId) {
+      const [selected] = await this.db.select().from(whatifVideoTasks).where(and(eq(whatifVideoTasks.id, scene.selectedResultId), eq(whatifVideoTasks.ownerId, ownerId))).limit(1);
+      if (selected) return selected;
+    }
+    const [latestSuccess] = await this.db.select().from(whatifVideoTasks)
+      .where(and(eq(whatifVideoTasks.sceneId, sceneId), eq(whatifVideoTasks.ownerId, ownerId), eq(whatifVideoTasks.status, 'success')))
+      .orderBy(desc(whatifVideoTasks.updatedAt)).limit(1);
+    return latestSuccess || null;
+  }
+
+  private async previousSceneFrameSummary(ownerId: string, sceneId: string) {
+    const task = await this.selectedVideoTaskForScene(ownerId, sceneId);
+    if (!task) return { lastFrameAvailable: false, lastFrameUrl: '', videoTaskId: '' };
+    const media = this.ai.videoMedia(task.responseSnapshot);
+    const lastFrameUrl = await this.signed(task.lastFramePath) || media.lastFrameUrl || '';
+    return {
+      lastFrameAvailable: Boolean(task.lastFramePath || media.lastFrameUrl),
+      lastFrameUrl,
+      videoTaskId: task.id,
+    };
+  }
+
+  private async previousLastFrameReference(ownerId: string, sceneId: string) {
+    const task = await this.selectedVideoTaskForScene(ownerId, sceneId);
+    if (!task) return null;
+    if (task.lastFramePath) {
+      const url = await this.signed(task.lastFramePath);
+      return url ? { url, path: task.lastFramePath, taskId: task.id } : null;
+    }
+    const media = this.ai.videoMedia(task.responseSnapshot);
+    if (!media.lastFrameUrl) return null;
+    const lastFramePath = await this.archiveRemote(media.lastFrameUrl, `${sceneId}-last-frame`);
+    await this.db.update(whatifVideoTasks).set({ lastFramePath, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, task.id));
+    const url = await this.signed(lastFramePath);
+    return url ? { url, path: lastFramePath, taskId: task.id } : null;
+  }
+
   async createSceneVideo(ownerId: string, draftId: string, body: AnyRecord) {
     const context = await this.draftContext(ownerId, draftId);
     const script = String(body.script || '').trim();
@@ -879,6 +936,11 @@ export class WhatifService {
       request: body,
     }));
     const previous = await this.previousScene(ownerId, body.parentSceneId ? String(body.parentSceneId) : undefined);
+    const inheritPreviousLastFrame = Boolean(previous && body.inheritPreviousLastFrame !== false);
+    const previousLastFrame = inheritPreviousLastFrame && previous
+      ? await this.previousLastFrameReference(ownerId, previous.id)
+      : null;
+    if (inheritPreviousLastFrame && !previousLastFrame) this.fail('PREVIOUS_LAST_FRAME_UNAVAILABLE', '上一幕最后一帧暂时不可用，请取消继承后重试', 422);
     const hasProfessionalPlan = Boolean(body.directorPlan && Array.isArray(body.directorPlan.shots));
     const directionInput = { script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous };
     // The storyboard preview is optional. When the user skips it, do not block
@@ -888,7 +950,19 @@ export class WhatifService {
       ? this.ai.normalizeDirectorPlan(body.directorPlan, context.casts)
       : this.ai.buildDirectScene(directionInput);
     if (directorPlan.capacity?.status === 'overflow' && body.force !== true) this.fail('SCENE_CAPACITY_OVERFLOW', directorPlan.capacity.message || '这一幕超过 15 秒，请缩短或拆成两幕', 422, { suggestedScript: directorPlan.capacity.suggestedScript });
-    const referenceAssets = await this.referenceAssetsFromSnapshots(ownerId, context.casts, context.worldview);
+    const baseReferenceAssets = await this.referenceAssetsFromSnapshots(ownerId, context.casts, context.worldview);
+    const referenceAssets = [
+      ...baseReferenceAssets,
+      ...(previousLastFrame ? [{
+        url: previousLastFrame.url,
+        purpose: '上一幕最后一帧，只用于继承上一幕结束时的场景、人物位置、道具状态和画面连续性，不改变已锁定的人物身份',
+        category: 'world_style' as const,
+      }] : []),
+    ].slice(0, 9).map((asset, index) => ({
+      ...asset,
+      token: `@图片${index + 1}`,
+      role: 'reference_image' as const,
+    }));
     const compilationInput = {
       story: { title: context.draft.title, setting: context.draft.setting, worldview: context.worldview },
       characters: context.casts,
@@ -926,6 +1000,8 @@ export class WhatifService {
         previous,
         directorPlan,
         directionMode: hasProfessionalPlan ? 'approved_professional_storyboard' : 'direct_user_script',
+        inheritPreviousLastFrame,
+        previousLastFrame: previousLastFrame ? { taskId: previousLastFrame.taskId, path: previousLastFrame.path } : null,
       },
       compilation,
       referenceAssets,
@@ -1001,8 +1077,32 @@ export class WhatifService {
             archiveWarning = archiveError instanceof Error ? archiveError.message : '成片归档失败，暂时使用模型地址';
             this.logger.warn(`video archive fallback: ${archiveWarning}`);
           }
+          const poster = await this.archiveOptionalRemote(upstream.firstFrameUrl || '', `${task.sceneId}-first-frame`, 'first frame');
+          const lastFrame = await this.archiveOptionalRemote(upstream.lastFrameUrl || '', `${task.sceneId}-last-frame`, 'last frame');
+          const frameWarnings = [poster.warning, lastFrame.warning].filter(Boolean);
           await this.db.transaction(async (tx) => {
-            await tx.update(whatifVideoTasks).set({ status: 'success', stage: 'completed', progress: 100, videoPath, responseSnapshot: upstream.raw, qaResult: { status: archiveWarning ? 'passed_with_warning' : 'passed', warning: archiveWarning || undefined, checks: ['provider_completed', 'video_url_present', 'duration_requested_15s', 'audio_requested'] }, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, task.id));
+            await tx.update(whatifVideoTasks).set({
+              status: 'success',
+              stage: 'completed',
+              progress: 100,
+              videoPath,
+              posterPath: poster.path || task.posterPath,
+              lastFramePath: lastFrame.path || task.lastFramePath,
+              responseSnapshot: upstream.raw,
+              qaResult: {
+                status: archiveWarning || frameWarnings.length ? 'passed_with_warning' : 'passed',
+                warning: [archiveWarning, ...frameWarnings].filter(Boolean).join('；') || undefined,
+                checks: [
+                  'provider_completed',
+                  'video_url_present',
+                  upstream.firstFrameUrl ? 'first_frame_url_present' : 'first_frame_url_not_returned',
+                  upstream.lastFrameUrl ? 'last_frame_url_present' : 'last_frame_url_not_returned',
+                  'duration_requested_15s',
+                  'audio_requested',
+                ],
+              },
+              updatedAt: new Date(),
+            }).where(eq(whatifVideoTasks.id, task.id));
             await tx.update(whatifScenes).set({ status: 'success', selectedResultId: task.id, chargeStatus: 'charged', updatedAt: new Date() }).where(eq(whatifScenes.id, task.sceneId));
           });
         } else if (failed) {
@@ -1027,7 +1127,8 @@ export class WhatifService {
     }
     const [scene] = await this.db.select().from(whatifScenes).where(eq(whatifScenes.id, current.sceneId)).limit(1);
     const [story] = await this.db.select().from(whatifStories).where(eq(whatifStories.id, current.storyId)).limit(1);
-    return { taskId: current.id, sceneId: current.sceneId, storyId: current.storyId, draftId: story?.sourceDraftId, storyTitle: story?.title, sceneTitle: scene?.title, userScript: scene?.userScript, directorPlan: scene?.directorPlan, status: current.status, stage: current.stage, stageLabel: this.stageLabel(current.stage), progress: current.progress, inputMode: current.inputMode, videoUrl: await this.signed(current.videoPath), errorCode: current.errorCode, errorMessage: current.errorMessage, chargeStatus: scene?.chargeStatus, priceSob: scene?.priceSob || 15, traceId: current.traceId || this.traceId() };
+    const media = this.ai.videoMedia(current.responseSnapshot);
+    return { taskId: current.id, sceneId: current.sceneId, storyId: current.storyId, draftId: story?.sourceDraftId, storyTitle: story?.title, sceneTitle: scene?.title, userScript: scene?.userScript, directorPlan: scene?.directorPlan, status: current.status, stage: current.stage, stageLabel: this.stageLabel(current.stage), progress: current.progress, inputMode: current.inputMode, videoUrl: await this.signed(current.videoPath), posterUrl: await this.signed(current.posterPath) || media.firstFrameUrl, lastFrameUrl: await this.signed(current.lastFramePath) || media.lastFrameUrl, errorCode: current.errorCode, errorMessage: current.errorMessage, chargeStatus: scene?.chargeStatus, priceSob: scene?.priceSob || 15, traceId: current.traceId || this.traceId() };
   }
 
   async getVideoResult(ownerId: string, taskId: string) {
@@ -1053,6 +1154,8 @@ export class WhatifService {
       promptVersion: task.promptVersion,
       requestSnapshot: task.requestSnapshot,
       responseSnapshot: task.responseSnapshot,
+      posterPath: task.posterPath,
+      lastFramePath: task.lastFramePath,
       userScript: scene?.userScript,
       directorPlan: scene?.directorPlan,
       seedancePrompt: scene?.seedancePrompt,
@@ -1092,7 +1195,24 @@ export class WhatifService {
     const branches = await this.db.select().from(whatifStoryBranches).where(eq(whatifStoryBranches.storyId, storyId)).orderBy(whatifStoryBranches.createdAt);
     const scenes = await this.db.select().from(whatifScenes).where(eq(whatifScenes.storyId, storyId)).orderBy(whatifScenes.sequence, whatifScenes.createdAt);
     const tasks = scenes.length ? await this.db.select().from(whatifVideoTasks).where(inArray(whatifVideoTasks.sceneId, scenes.map((scene) => scene.id))).orderBy(desc(whatifVideoTasks.createdAt)) : [];
-    return { story: { ...story, coverUrl: await this.signed(story.coverPath) }, branches, scenes: await Promise.all(scenes.map(async (scene) => { const task = tasks.find((item) => item.id === scene.selectedResultId) || tasks.find((item) => item.sceneId === scene.id); return { ...scene, videoTaskId: task?.id, videoUrl: await this.signed(task?.videoPath), errorCode: task?.errorCode, errorMessage: task?.errorMessage }; })), traceId: this.traceId() };
+    return {
+      story: { ...story, coverUrl: await this.signed(story.coverPath) },
+      branches,
+      scenes: await Promise.all(scenes.map(async (scene) => {
+        const task = tasks.find((item) => item.id === scene.selectedResultId) || tasks.find((item) => item.sceneId === scene.id);
+        const media = this.ai.videoMedia(task?.responseSnapshot);
+        return {
+          ...scene,
+          videoTaskId: task?.id,
+          videoUrl: await this.signed(task?.videoPath),
+          posterUrl: await this.signed(task?.posterPath) || media.firstFrameUrl,
+          lastFrameUrl: await this.signed(task?.lastFramePath) || media.lastFrameUrl,
+          errorCode: task?.errorCode,
+          errorMessage: task?.errorMessage,
+        };
+      })),
+      traceId: this.traceId(),
+    };
   }
 
   async createBranch(ownerId: string, storyId: string, body: AnyRecord) {

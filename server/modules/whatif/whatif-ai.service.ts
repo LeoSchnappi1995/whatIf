@@ -695,6 +695,64 @@ export class WhatifAiService {
     return result;
   }
 
+  private imageUrlByKey(data: any, exactCandidates: unknown[], keyPattern: RegExp) {
+    const imageUrl = (value: unknown) => {
+      const text = String(value || '');
+      return /^https?:\/\//.test(text) && /\.(png|jpe?g|webp)(\?|$)/i.test(text) ? text : '';
+    };
+    const direct = exactCandidates.map(imageUrl).find(Boolean);
+    if (direct) return direct;
+    let result = '';
+    this.walk(data, (value, key) => {
+      if (!result && keyPattern.test(key)) result = imageUrl(value);
+    });
+    return result;
+  }
+
+  private firstFrameUrl(data: any) {
+    return this.imageUrlByKey(data, [
+      data?.first_frame_url,
+      data?.first_frame?.url,
+      data?.poster_url,
+      data?.poster?.url,
+      data?.cover_url,
+      data?.cover?.url,
+      data?.content?.first_frame_url,
+      data?.content?.first_frame?.url,
+      data?.content?.poster_url,
+      data?.content?.poster?.url,
+      data?.output?.first_frame_url,
+      data?.output?.poster_url,
+      data?.result?.first_frame_url,
+      data?.data?.first_frame_url,
+      data?.data?.content?.first_frame_url,
+      data?.data?.output?.first_frame_url,
+    ], /^(first[_-]?frame[_-]?url|first[_-]?frame|poster[_-]?url|poster|cover[_-]?url|cover)$/i);
+  }
+
+  private lastFrameUrl(data: any) {
+    return this.imageUrlByKey(data, [
+      data?.last_frame_url,
+      data?.last_frame?.url,
+      data?.content?.last_frame_url,
+      data?.content?.last_frame?.url,
+      data?.output?.last_frame_url,
+      data?.output?.last_frame?.url,
+      data?.result?.last_frame_url,
+      data?.data?.last_frame_url,
+      data?.data?.content?.last_frame_url,
+      data?.data?.output?.last_frame_url,
+    ], /^(last[_-]?frame[_-]?url|last[_-]?frame)$/i);
+  }
+
+  videoMedia(data: any) {
+    return {
+      videoUrl: this.videoUrl(data),
+      firstFrameUrl: this.firstFrameUrl(data),
+      lastFrameUrl: this.lastFrameUrl(data),
+    };
+  }
+
   private taskError(data: any) {
     return String(data?.error?.message || data?.message || data?.failure_reason || data?.data?.error?.message || '');
   }
@@ -914,7 +972,7 @@ export class WhatifAiService {
     }
     return {
       status: this.taskStatus(data) || 'running',
-      videoUrl: this.videoUrl(data),
+      ...this.videoMedia(data),
       error: this.taskError(data),
       raw: data,
     };
