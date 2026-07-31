@@ -2,7 +2,9 @@ export const PROMPT_VERSIONS = {
   characterProfile: 'character-profile-v2',
   characterAsset: 'character-asset-v2',
   storyDirector: 'story-director-v3',
+  storyDirect: 'story-direct-v1',
   seedanceCompiler: 'seedance-compiler-v3',
+  seedanceDirect: 'seedance-direct-v1',
   publicationCopy: 'publication-copy-v2',
 } as const;
 

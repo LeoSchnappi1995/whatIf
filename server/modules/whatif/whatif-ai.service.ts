@@ -70,6 +70,142 @@ export class WhatifAiService {
     );
   }
 
+  private directScenePlan(input: Record<string, unknown>) {
+    const script = String(input.script || input.userScript || '').trim();
+    const story = (input.story && typeof input.story === 'object' ? input.story : {}) as Record<string, any>;
+    const characters = (Array.isArray(input.characters) ? input.characters : []) as Array<Record<string, any>>;
+    const previous = (input.previous && typeof input.previous === 'object' ? input.previous : null) as Record<string, any> | null;
+    const names = characters.map((item) => String(item.name || '')).filter(Boolean);
+    const setting = String(
+      story.setting
+      || story.worldview?.description
+      || story.worldview?.name
+      || '用户剧情描述中的主要场景',
+    );
+    const looks = Object.fromEntries(characters.map((item) => [
+      String(item.name || '角色'),
+      String(item.description || '继承已确认的人物身份、脸、发型和基础造型'),
+    ]));
+    const openingState = previous?.continuityOut
+      ? `继承上一幕结束状态：${JSON.stringify(previous.continuityOut)}`
+      : `${names.join('、') || '故事人物'}位于${setting}`;
+
+    return {
+      title: script.slice(0, 18) || '新的故事片段',
+      summary: script,
+      capacity: {
+        status: script.length > 160 ? 'tight' : 'ok',
+        message: script.length > 160 ? '剧情信息较多，将优先呈现核心动作与结果' : '将按一个连续的 15 秒事件呈现',
+        suggestedScript: '',
+      },
+      visual: {
+        looks,
+        scene: `${setting}。场景、美术、光线和材质继承已选世界观，不额外改写用户剧情。`,
+        props: '只使用用户剧情明确出现或完成核心动作必需的具体道具，不凭空增加新物件。',
+        sound: '根据用户剧情自动匹配环境音、动作音和必要的人声，保持自然同步。',
+        continuity: '锁定已选人物身份、世界观、角色数量和用户明确事件，全程保持一致。',
+      },
+      audio: {
+        voiceCasting: Object.fromEntries(names.map((name) => [name, '继承该角色稳定声线；没有明确对白时不强加对白'])),
+        ambience: '与主场景一致的连续环境音',
+        music: '低音量电影配乐，只服务情绪转折，不盖过动作和对白',
+        mix: '对白和关键动作优先，环境音其次，音乐最低',
+        durationPlan: '0-4秒建立事件，4-10秒完成核心动作，10-15秒呈现结果与情绪落点',
+      },
+      shots: [
+        {
+          time: '0-4秒',
+          title: '进入事件',
+          stateIn: openingState,
+          action: `用一个明确可见的动作进入用户事件：${script}`,
+          stateOut: '人物位置、视线和核心动作起点清楚建立',
+          camera: '9:16竖屏中景，眼平机位，克制跟拍，不使用静态慢推',
+          sound: '连续环境音与动作起音',
+          dialogue: '',
+          speaker: '',
+          emotion: '自然进入事件',
+        },
+        {
+          time: '4-10秒',
+          title: '核心动作',
+          stateIn: '承接上一段已建立的人物位置和动作起点',
+          action: `连续完成用户描述的核心动作，不新增支线：${script}`,
+          stateOut: '核心动作完成，事件结果即将显现',
+          camera: '中近景跟随核心动作移动，在动作匹配点自然切换景别',
+          sound: '突出关键动作音；仅保留用户明确写出的对白',
+          dialogue: '',
+          speaker: '',
+          emotion: '情绪随动作自然推进',
+        },
+        {
+          time: '10-15秒',
+          title: '结果落点',
+          stateIn: '承接核心动作完成后的角色与道具状态',
+          action: `呈现用户事件的直接结果并形成清楚落点：${script}`,
+          stateOut: '人物、场景和关键道具停留在可供下一幕继承的明确状态',
+          camera: '近景或双人中近景，以结果为视觉中心，结尾保留约0.5秒余量',
+          sound: '动作尾音、自然呼吸与低音量情绪音乐收束',
+          dialogue: '',
+          speaker: '',
+          emotion: '完成用户指定的情绪方向',
+        },
+      ],
+      continuityOut: {
+        characterStates: `${names.join('、') || '人物'}保持本幕结束时的位置、服装和情绪状态`,
+        sceneState: setting,
+        propStates: '继承用户剧情中已出现的关键道具及其结束状态',
+        openQuestion: '仅保留当前事件自然产生的后续空间，不强加悬念',
+      },
+      promptVersion: PROMPT_VERSIONS.storyDirect,
+    };
+  }
+
+  private directSeedanceCompilation(input: Record<string, unknown>) {
+    const referenceAssets = (Array.isArray(input.referenceAssets) ? input.referenceAssets : [])
+      .map((asset: any, index) => ({
+        token: String(asset?.token || `@图片${index + 1}`),
+        role: 'reference_image',
+        purpose: String(asset?.purpose || '').trim(),
+      }))
+      .filter((asset) => asset.purpose);
+    const referenceBindings = referenceAssets.length
+      ? referenceAssets.map((asset) => `${asset.token}：${asset.purpose}`).join('\n')
+      : 'No image reference is supplied.';
+    const script = String(input.userScript || (input.directorPlan as any)?.summary || '').trim();
+    const story = (input.story && typeof input.story === 'object' ? input.story : {}) as Record<string, any>;
+    const characters = (Array.isArray(input.characters) ? input.characters : []) as Array<Record<string, any>>;
+    const directorPlan = (input.directorPlan && typeof input.directorPlan === 'object' ? input.directorPlan : {}) as Record<string, any>;
+    const shots = (Array.isArray(directorPlan.shots) ? directorPlan.shots : []) as Array<Record<string, any>>;
+    const characterText = characters.map((item) => `${item.name || 'Character'}: ${item.description || 'preserve the approved identity'}`).join('; ');
+    const timeline = shots.map((shot) => `${shot.time || ''} ${shot.action || ''} Camera: ${shot.camera || ''} Sound: ${shot.sound || ''}`).join('\n');
+    const compiledPrompt = [
+      'Create one continuous 15-second cinematic vertical video, 9:16, 720p, with synchronized native audio.',
+      `User story intent — follow this literally and do not add another event: ${script}`,
+      `Story and world context: ${JSON.stringify(story)}`,
+      `Characters: ${characterText || 'Use only the characters explicitly present in the user story.'}`,
+      `Reference bindings: ${referenceBindings}`,
+      `15-second timeline:\n${timeline}`,
+      'Keep one location and one causally connected event. Every action must visibly continue from the previous state; avoid montage, slideshow pacing, static posing, excessive slow motion, or trailer-like fragments.',
+      'Lock every referenced identity to its own numbered image. Preserve character count, face, hairstyle, age, body proportion, costume continuity, world style, prop state, screen direction, and spatial relationship.',
+      'Use only dialogue explicitly written by the user. Do not add subtitles, captions, logos, watermarks, split screens, collages, or extra people.',
+    ].join('\n');
+    const prompt = referenceAssets.length
+      ? `Reference asset bindings (the numbering exactly matches the following image inputs):\n${referenceBindings}\n\n${compiledPrompt}`
+      : compiledPrompt;
+    const textOnlyPrompt = referenceAssets.reduce(
+      (value, asset) => value.replaceAll(asset.token, `[${asset.purpose}]`),
+      compiledPrompt,
+    );
+    return {
+      prompt,
+      promptBody: compiledPrompt,
+      textOnlyPrompt,
+      negativePrompt: 'identity drift, face swap, extra people, character fusion, costume change, malformed anatomy, duplicated limbs, deformed hands, prop mutation, inconsistent background, montage, slideshow, static posing, excessive slow motion, subtitles, captions, logo, watermark, split screen, collage',
+      referencePlan: referenceAssets,
+      promptVersion: PROMPT_VERSIONS.seedanceDirect,
+    };
+  }
+
   private async textJson(prompt: string, temperature = 0.55) {
     const gatewayReady = Boolean(this.textGatewayBase && this.textGatewayToken && this.textGatewayModel);
     const deepseekReady = Boolean(this.deepseekKey);
@@ -293,17 +429,26 @@ export class WhatifAiService {
   }
 
   async directScene(input: Record<string, unknown>) {
-    const result: any = await this.textJson(
-      renderPrompt(STORY_DIRECTOR_PROMPT, { INPUT_JSON: JSON.stringify(input) }),
-      0.45,
-    );
-    const shots = Array.isArray(result?.shots) ? result.shots.slice(0, 4) : [];
-    if (shots.length < 2) throw this.codedError('DIRECTOR_INVALID_RESPONSE', 'AI 分镜不完整，请重新生成', 502);
-    return {
-      ...result,
-      shots,
-      promptVersion: PROMPT_VERSIONS.storyDirector,
-    };
+    try {
+      const result: any = await this.textJson(
+        renderPrompt(STORY_DIRECTOR_PROMPT, { INPUT_JSON: JSON.stringify(input) }),
+        0.45,
+      );
+      const shots = Array.isArray(result?.shots) ? result.shots.slice(0, 4) : [];
+      if (shots.length < 2) throw this.codedError('DIRECTOR_INVALID_RESPONSE', 'AI 分镜不完整，请重新生成', 502);
+      return {
+        ...result,
+        shots,
+        promptVersion: PROMPT_VERSIONS.storyDirector,
+      };
+    } catch (error) {
+      this.logger.warn(`Professional director model failed; using direct scene fallback. reason=${error instanceof Error ? error.message : error}`);
+      return this.directScenePlan(input);
+    }
+  }
+
+  buildDirectScene(input: Record<string, unknown>) {
+    return this.directScenePlan(input);
   }
 
   async compileSeedance(input: Record<string, unknown>) {
@@ -317,13 +462,19 @@ export class WhatifAiService {
     const referenceBindings = referenceAssets.length
       ? referenceAssets.map((asset) => `${asset.token}：${asset.purpose}`).join('\n')
       : '本次没有图片参考，只根据文字导演方案生成。';
-    const result: any = await this.textJson(
-      renderPrompt(SEEDANCE_COMPILER_PROMPT, {
-        REFERENCE_BINDINGS: referenceBindings,
-        INPUT_JSON: JSON.stringify(input),
-      }),
-      0.2,
-    );
+    let result: any;
+    try {
+      result = await this.textJson(
+        renderPrompt(SEEDANCE_COMPILER_PROMPT, {
+          REFERENCE_BINDINGS: referenceBindings,
+          INPUT_JSON: JSON.stringify(input),
+        }),
+        0.2,
+      );
+    } catch (error) {
+      this.logger.warn(`Seedance compiler model failed; using deterministic compiler. reason=${error instanceof Error ? error.message : error}`);
+      return this.directSeedanceCompilation(input);
+    }
     const compiledPrompt = String(result?.prompt || '').trim();
     if (!compiledPrompt) throw this.codedError('SEEDANCE_PROMPT_EMPTY', '视频 Prompt 编译失败', 502);
     const prompt = referenceAssets.length
@@ -341,6 +492,10 @@ export class WhatifAiService {
       referencePlan: referenceAssets,
       promptVersion: PROMPT_VERSIONS.seedanceCompiler,
     };
+  }
+
+  compileSeedanceDirect(input: Record<string, unknown>) {
+    return this.directSeedanceCompilation(input);
   }
 
   private seedanceHeaders() {
