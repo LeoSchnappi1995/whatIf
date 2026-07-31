@@ -36,6 +36,11 @@ function getErrorMessage(error: unknown) {
   return undefined;
 }
 
+function getErrorCode(error: unknown) {
+  if (typeof error !== 'object' || error === null) return undefined;
+  return (error as { response?: { data?: { error?: { code?: string } } } }).response?.data?.error?.code;
+}
+
 function CastSkeleton() {
   return (
     <main className="cast-page">
@@ -147,6 +152,7 @@ export default function CastSetting() {
   });
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSequenceRef = useRef(0);
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const loadPage = useCallback(async () => {
     setLoading(true);
@@ -186,37 +192,66 @@ export default function CastSetting() {
       if (confirm) setConfirming(true);
       else setSaving(true);
 
-      try {
-        const response = await updateCastSetting(draftId, {
-          characterIds,
-          worldviewId: nextWorldviewId,
-          draftVersion: versionRef.current,
-          storyTitle,
-          confirm,
+      const operation = saveQueueRef.current
+        .catch(() => undefined)
+        .then(async (): Promise<UpdateCastSettingResponse | null> => {
+          try {
+            const request = () => updateCastSetting(draftId, {
+              characterIds,
+              worldviewId: nextWorldviewId,
+              draftVersion: versionRef.current,
+              storyTitle,
+              confirm,
+            });
+
+            let response: UpdateCastSettingResponse;
+            try {
+              response = await request();
+            } catch (saveError) {
+              if (getErrorCode(saveError) !== 'DRAFT_VERSION_CONFLICT') throw saveError;
+
+              // A stale tab or an earlier request may already have advanced the
+              // draft version. Pull the authoritative version and replay this
+              // tab's latest complete selection once, without losing the
+              // user's current input or exposing a technical conflict toast.
+              const latest = await getCastSetting(draftId);
+              versionRef.current = latest.draftVersion;
+              snapshotRef.current = {
+                characterIds: latest.selectedCharacterIds,
+                worldviewId: latest.selectedWorldviewId,
+              };
+              response = await request();
+            }
+
+            // Every queued success advances the version used by the next
+            // request. Only the latest intent is reflected back into the UI.
+            versionRef.current = response.draftVersion;
+            snapshotRef.current = {
+              characterIds: response.selectedCharacterIds,
+              worldviewId: response.selectedWorldviewId,
+            };
+            if (sequence === saveSequenceRef.current) {
+              setSelectedIds(response.selectedCharacterIds);
+              setWorldviewId(response.selectedWorldviewId);
+            }
+            return response;
+          } catch (saveError) {
+            if (sequence === saveSequenceRef.current) {
+              setSelectedIds(snapshotRef.current.characterIds);
+              setWorldviewId(snapshotRef.current.worldviewId);
+              toast.error(getErrorMessage(saveError) ?? '保存失败，请重试');
+            }
+            return null;
+          } finally {
+            if (sequence === saveSequenceRef.current) {
+              setSaving(false);
+              setConfirming(false);
+            }
+          }
         });
-        if (sequence === saveSequenceRef.current) {
-          versionRef.current = response.draftVersion;
-          snapshotRef.current = {
-            characterIds: response.selectedCharacterIds,
-            worldviewId: response.selectedWorldviewId,
-          };
-          setSelectedIds(response.selectedCharacterIds);
-          setWorldviewId(response.selectedWorldviewId);
-        }
-        return response;
-      } catch (saveError) {
-        if (sequence === saveSequenceRef.current) {
-          setSelectedIds(snapshotRef.current.characterIds);
-          setWorldviewId(snapshotRef.current.worldviewId);
-          toast.error(getErrorMessage(saveError) ?? '保存失败，请重试');
-        }
-        return null;
-      } finally {
-        if (sequence === saveSequenceRef.current) {
-          setSaving(false);
-          setConfirming(false);
-        }
-      }
+
+      saveQueueRef.current = operation;
+      return operation;
     },
     [draftId, storyTitle],
   );
