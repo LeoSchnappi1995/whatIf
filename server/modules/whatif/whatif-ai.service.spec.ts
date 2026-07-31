@@ -6,6 +6,7 @@ describe('WhatifAiService', () => {
     taskId(data: unknown): string;
     taskStatus(data: unknown): string;
     videoUrl(data: unknown): string;
+    videoMedia(data: unknown): { videoUrl: string; firstFrameUrl: string; lastFrameUrl: string };
     shouldRetryWithoutReferences(message: string): boolean;
     rejectedContentIndex(message: string): number;
   };
@@ -29,6 +30,25 @@ describe('WhatifAiService', () => {
   it('finds a completed video URL in official output shapes', () => {
     const data = { output: { video_url: 'https://cdn.example.com/final.mp4' } };
     expect(service.videoUrl(data)).toBe('https://cdn.example.com/final.mp4');
+  });
+
+  it('finds Seedance frame URLs without treating input images as output frames', () => {
+    const data = {
+      content: {
+        video_url: 'https://cdn.example.com/final.mp4',
+        last_frame_url: 'https://cdn.example.com/final_last-frame.png',
+        first_frame_url: 'https://cdn.example.com/final_first-frame.png',
+      },
+      request: {
+        content: [{ image_url: { url: 'https://cdn.example.com/input.png' } }],
+      },
+    };
+
+    expect(service.videoMedia(data)).toEqual({
+      videoUrl: 'https://cdn.example.com/final.mp4',
+      firstFrameUrl: 'https://cdn.example.com/final_first-frame.png',
+      lastFrameUrl: 'https://cdn.example.com/final_last-frame.png',
+    });
   });
 
   it('retries text-only when Seedance rejects an image format', () => {

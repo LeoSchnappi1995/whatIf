@@ -506,6 +506,7 @@ export function SceneEditorPage() {
   const [storyboardGenerated, setStoryboardGenerated] = useState(false);
   const [plan, setPlan] = useState<Json | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [inheritPreviousLastFrame, setInheritPreviousLastFrame] = useState(true);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -523,6 +524,7 @@ export function SceneEditorPage() {
   useEffect(() => {
     void whatifRequest<Json>(`/api/story-drafts/${draftId}/scene-editor`, { params: { parentSceneId } }).then((data) => {
       setContext(data);
+      setInheritPreviousLastFrame(Boolean(data.previous?.lastFrameAvailable));
       const saved = window.sessionStorage.getItem(storageKey);
       if (saved) {
         try {
@@ -531,6 +533,7 @@ export function SceneEditorPage() {
           setOriginalScript(String(localDraft.originalScript || ''));
           setStoryboardGenerated(Boolean(localDraft.storyboardGenerated));
           setPlan(localDraft.plan || null);
+          setInheritPreviousLastFrame(localDraft.inheritPreviousLastFrame !== false && Boolean(data.previous?.lastFrameAvailable));
           return;
         } catch {
           window.sessionStorage.removeItem(storageKey);
@@ -552,8 +555,8 @@ export function SceneEditorPage() {
 
   useEffect(() => {
     if (!context) return;
-    window.sessionStorage.setItem(storageKey, JSON.stringify({ script, originalScript, storyboardGenerated, plan }));
-  }, [context, originalScript, plan, script, storageKey, storyboardGenerated]);
+    window.sessionStorage.setItem(storageKey, JSON.stringify({ script, originalScript, storyboardGenerated, plan, inheritPreviousLastFrame }));
+  }, [context, inheritPreviousLastFrame, originalScript, plan, script, storageKey, storyboardGenerated]);
 
   const runPreview = useCallback(async (nextScript: string, refinements?: Json) => {
     if (nextScript.trim().length < 6) {
@@ -615,7 +618,7 @@ export function SceneEditorPage() {
     setPreviewing(false);
     setSubmitting(true);
     try {
-      const result = await whatifRequest<Json>(`/api/story-drafts/${draftId}/scenes/generate`, { method: 'POST', data: { script, ...(plan ? { directorPlan: plan } : {}), parentSceneId, branchId } });
+      const result = await whatifRequest<Json>(`/api/story-drafts/${draftId}/scenes/generate`, { method: 'POST', data: { script, ...(plan ? { directorPlan: plan } : {}), parentSceneId, branchId, inheritPreviousLastFrame } });
       window.sessionStorage.removeItem(storageKey);
       navigate(`/video-tasks/${result.taskId}`);
     } catch (error) {
@@ -636,6 +639,11 @@ export function SceneEditorPage() {
   ];
   return <MobilePage title={parentSceneId ? '续写下一幕' : '描述第一幕'} eyebrow={`${context.story.title} · 15秒一幕`} action={<button onClick={() => toast('当前内容已自动保留')}><MoreHorizontal /></button>}>
     {context.previous && <section className="previous-summary"><small>前情概要</small><strong>{context.previous.title}</strong><p>{context.previous.summary}</p></section>}
+    {context.previous?.lastFrameAvailable && <button className={`continuity-frame-option ${inheritPreviousLastFrame ? 'active' : ''}`} type="button" onClick={() => setInheritPreviousLastFrame(!inheritPreviousLastFrame)}>
+      <i>{inheritPreviousLastFrame && <Check />}</i>
+      <span><strong>继承上一幕最后一帧</strong><small>从上一幕结束画面继续</small></span>
+      {context.previous.lastFrameUrl && <img src={mediaUrl(context.previous.lastFrameUrl)} />}
+    </button>}
     <section className="scene-cast-card">
       <div className="scene-cast-heading"><span><strong>本幕人物</strong><small>决定这一幕谁会出镜</small></span><button type="button" onClick={() => navigate(`/story-drafts/${draftId}/cast?returnTo=${castReturnTo}`)}>调整</button></div>
       <div className="scene-cast-list">

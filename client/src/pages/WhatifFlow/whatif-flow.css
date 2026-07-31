@@ -498,6 +498,58 @@
   font-size: 10px;
   line-height: 1.5;
 }
+.continuity-frame-option {
+  display: grid;
+  width: 100%;
+  min-height: 72px;
+  grid-template-columns: 24px 1fr 48px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 11px 12px;
+  border: 1px solid #dfe7e7;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(20, 45, 46, 0.06);
+  text-align: left;
+}
+.continuity-frame-option > i {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c8d4d5;
+  border-radius: 7px;
+  color: #fff;
+}
+.continuity-frame-option.active > i {
+  border-color: #12b8b0;
+  background: #12b8b0;
+}
+.continuity-frame-option > i svg {
+  width: 14px;
+}
+.continuity-frame-option > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.continuity-frame-option strong {
+  color: #1f2c2d;
+  font-size: 12px;
+}
+.continuity-frame-option small {
+  color: #8c9596;
+  font-size: 9px;
+}
+.continuity-frame-option img {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  object-fit: cover;
+}
 .scene-cast-card {
   margin-bottom: 14px;
   padding: 15px;
