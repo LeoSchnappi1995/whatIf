@@ -169,13 +169,13 @@ export class WhatifAiService {
       } catch (error) {
         if (source === 'gateway' && this.mediaKey && this.shouldFallbackImageGateway(error)) {
           gatewayError = error;
-          this.logger.warn(`${fallbackMessage}网关连接失败，自动切到 Ark 直连。reason=${JSON.stringify(this.imageErrorDetails(error, source))}`);
+          this.logger.warn(`${fallbackMessage}：网关连接失败，自动切到 Ark 直连。reason=${JSON.stringify(this.imageErrorDetails(error, source))}`);
           continue;
         }
         if (!(error as CodedError)?.code) {
           throw this.codedError(
             `${codePrefix}_NETWORK_ERROR`,
-            `${fallbackMessage}网络连接失败，请稍后重试`,
+            `${fallbackMessage}：网络连接失败，请稍后重试`,
             502,
             {
               current: this.imageErrorDetails(error, source),
@@ -189,7 +189,7 @@ export class WhatifAiService {
 
     throw this.codedError(
       `${codePrefix}_NETWORK_ERROR`,
-      `${fallbackMessage}网络连接失败，请稍后重试`,
+      `${fallbackMessage}：网络连接失败，请稍后重试`,
       502,
       gatewayError ? this.imageErrorDetails(gatewayError, 'gateway') : undefined,
     );
