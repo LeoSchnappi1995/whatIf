@@ -136,7 +136,7 @@ describe('WhatifAiService Seedance compiler', () => {
     expect(result.negativePrompt).toContain('character in phone screen without permission');
   });
 
-  it('renumbers prompt bindings when Seedance rejects one reference image', async () => {
+  it('renumbers prompt bindings when Seedance rejects a non-character reference image', async () => {
     process.env.SEEDANCE_API_KEY = 'test-key';
     process.env.SEEDANCE_MODEL = 'test-model';
     const service = new WhatifAiService();
@@ -153,11 +153,11 @@ describe('WhatifAiService Seedance compiler', () => {
       } as Response);
 
     await service.createVideo({
-      prompt: '@图片1 is Lin Xia. @图片2 is Jiang Yu.',
-      promptBody: '@图片1 is Lin Xia. @图片2 is Jiang Yu.',
+      prompt: '@图片1 is the locked story world. @图片2 is Jiang Yu.',
+      promptBody: '@图片1 is the locked story world. @图片2 is Jiang Yu.',
       referenceAssets: [
-        { url: 'https://example.com/linxia.png', token: '@图片1', purpose: '林夏的人物身份参考' },
-        { url: 'https://example.com/jiangyu.png', token: '@图片2', purpose: '江屿的人物身份参考' },
+        { url: 'https://example.com/world.png', token: '@图片1', purpose: '现代都市的世界与场景美术参考', category: 'world_style' },
+        { url: 'https://example.com/jiangyu.png', token: '@图片2', purpose: '江屿的人物身份参考', category: 'character_identity' },
       ],
     });
 
@@ -173,7 +173,7 @@ describe('WhatifAiService Seedance compiler', () => {
     delete process.env.SEEDANCE_MODEL;
   });
 
-  it('keeps the world-style reference when multiple character images are rejected', async () => {
+  it('stops instead of generating a stranger when Seedance rejects a character asset', async () => {
     process.env.SEEDANCE_API_KEY = 'test-key';
     process.env.SEEDANCE_MODEL = 'test-model';
     const service = new WhatifAiService();
@@ -182,19 +182,9 @@ describe('WhatifAiService Seedance compiler', () => {
         ok: false,
         status: 400,
         text: async () => JSON.stringify({ error: { message: "input image 'content[1]' may contain real person" } }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        text: async () => JSON.stringify({ error: { message: "input image 'content[1]' may contain real person" } }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify({ id: 'video-task-style-only', status: 'queued' }),
       } as Response);
 
-    const result = await service.createVideo({
+    await expect(service.createVideo({
       prompt: '@图片1 is Lin Xia. @图片2 is Jiang Yu. @图片3 is the locked story world.',
       promptBody: '@图片1 is Lin Xia. @图片2 is Jiang Yu. @图片3 is the locked story world.',
       referenceAssets: [
@@ -202,15 +192,9 @@ describe('WhatifAiService Seedance compiler', () => {
         { url: 'https://example.com/jiangyu.png', token: '@图片2', purpose: '江屿的人物身份参考', category: 'character_identity' },
         { url: 'https://example.com/world.png', token: '@图片3', purpose: '现代都市的世界与场景美术参考', category: 'world_style' },
       ],
-    });
+    })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'SEEDANCE_CHARACTER_ASSET_REJECTED' }) });
 
-    expect(result.inputMode).toBe('style_reference_fallback');
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const styleFallbackBody = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
-    expect(styleFallbackBody.content).toHaveLength(2);
-    expect(styleFallbackBody.content[0].text).toContain('@图片1：现代都市的世界与场景美术参考');
-    expect(styleFallbackBody.content[0].text).toContain('@图片1 is the locked story world.');
-    expect(styleFallbackBody.content[1].image_url.url).toBe('https://example.com/world.png');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     fetchMock.mockRestore();
     delete process.env.SEEDANCE_API_KEY;

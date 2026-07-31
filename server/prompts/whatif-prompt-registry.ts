@@ -1,6 +1,7 @@
 export const PROMPT_VERSIONS = {
   characterProfile: 'character-profile-v2',
   characterAsset: 'character-asset-v2',
+  seedanceCharacterMaster: 'seedance-character-master-v1',
   storyDirector: 'story-director-v5',
   storyDirect: 'story-direct-v3',
   seedanceCompiler: 'seedance-compiler-v5',
@@ -53,6 +54,17 @@ Required view:
 The asset must remain style-neutral. Preserve the native two-dimensional medium of the supplied references: photographic references stay realistic studio photography; illustration references stay in the same illustration medium. Never convert a photographic person into anime, 3D, plastic figurine or game avatar. Use one restrained neutral base outfit, a clean warm-white studio background, eye-level camera, soft even lighting and natural anatomy.
 
 Output only one adult person and one requested view. No collage, split screen, extra pose, environment, prop, text, logo or watermark. No malformed anatomy, identity blending, face warping, crossed eyes, duplicated limbs, glamour pose or three-quarter angle when a strict side/back view is requested.
+`;
+
+export const SEEDANCE_CHARACTER_MASTER_PROMPT = `
+Create one Seedance-compatible identity master for an original fictional adult character. Use the supplied image only as the identity source for {{NAME}}. Preserve the same recognizable fictional face, facial proportions, hairstyle, adult age, body proportions and distinguishing features while rebuilding the result as a clean original AIGC character asset.
+
+Character name: {{NAME}}
+Stable identity description: {{DESCRIPTION}}
+
+Output one front-facing full-body adult person from head to toe on a clean warm-white studio background. Use realistic two-dimensional studio photography, a restrained neutral urban base outfit, eye-level camera, soft even light, natural skin, hair and fabric, neutral expression and relaxed straight posture. The face must remain large and clear enough to identify in later video generation.
+
+This is a reusable identity reference, not a story frame. No environment, prop, action pose, collage, split screen, extra person, celebrity resemblance, copyrighted character, text, logo or watermark. Do not create anime, 3D, a plastic figurine or a game avatar. Do not warp the face, merge identities, change gender presentation, change age, duplicate limbs or crop the feet.
 `;
 
 export const STORY_DIRECTOR_PROMPT = `

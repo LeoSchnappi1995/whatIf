@@ -179,20 +179,19 @@ const fallbackWorldviews = [
 ];
 
 const fallbackWorks = [
-  ['work-001', '我们在城市尽头重逢', '都市 · 久别重逢', 'cinema.png', '小岛来信', 32841, 60],
-  ['work-002', '穿越到唐朝', '古风 · 命运重写', 'anime.jpg', '晚风有信', 28712, 45],
-  ['work-003', '和你错过的夏天', '青春 · 遗憾重逢', 'fresh.jpg', '林屿森', 24490, 30],
-  ['work-004', '假如我们没有分开', '都市 · 雨夜重逢', 'retro.jpg', '江屿', 21305, 60],
-  ['work-005', '2056 年的最后一封信', '未来 · 平行世界', 'cinema.png', '北辰', 19883, 45],
-  ['work-006', '如果小狗会说话', '治愈 · 家庭日常', 'fresh.jpg', '毛球计划', 18672, 30],
-  ['work-007', '成为魔法学院新生', '魔法 · 成长冒险', 'anime.jpg', '阿雾', 16942, 60],
-  ['work-008', '醒来后世界只剩我们', '末日 · 双人逃生', 'retro.jpg', '重启日记', 15108, 45],
-].map(([id, title, subtitle, cover, authorName, likeCount, durationSeconds]) => ({
+  ['work-001', '如果今天重新开始', '都市 · 健身房 · 自我重启', 'gym-restart.png', '第二世界实验室', 32841, 15, 'gym-restart.m4v'],
+  ['work-002', '聚光灯熄灭以后', '都市 · 后台 · 心动重逢', 'backstage-reunion.png', '星光来信', 28712, 15, 'backstage-reunion.m4v'],
+  ['work-003', '2056 年的最后一班车', '未来 · 雨夜 · 平行世界', 'future-pod.png', '北辰', 24490, 15, 'future-pod.m4v'],
+  ['work-004', '雨停以前抱紧你', '动画电影 · 旧书店 · 久别重逢', 'rain-library-embrace.png', '江屿', 21305, 15, 'rain-library-embrace.m4v'],
+  ['work-005', '旧书店门口的约定', '动画电影 · 雨夜 · 心动故事', 'rain-umbrella-promise.png', '小岛来信', 19883, 15, 'rain-umbrella-promise.m4v'],
+  ['work-006', '终于在城市尽头重逢', '电影感 · 都市 · 命运重写', 'city-reunion.png', '晚风有信', 18672, 15, 'city-reunion.m4v'],
+].map(([id, title, subtitle, cover, authorName, likeCount, durationSeconds, video]) => ({
   id: String(id),
   workId: String(id),
   title: String(title),
   subtitle: String(subtitle),
-  coverUrl: `${ASSET_BASE}/${cover}`,
+  coverUrl: `${ASSET_BASE}/demo-covers/${cover}`,
+  videoUrl: `${ASSET_BASE}/demo-videos/${video}`,
   authorName: String(authorName),
   avatarUrl: `${ASSET_BASE}/self.jpg`,
   likeCount: Number(likeCount),
@@ -253,6 +252,30 @@ export class WhatifService {
     return uploaded.filePath;
   }
 
+  private providerUrlExpiresAt(url: string) {
+    try {
+      const parsed = new URL(url);
+      const signedAt = parsed.searchParams.get('X-Tos-Date');
+      const expiresSeconds = Number(parsed.searchParams.get('X-Tos-Expires') || 0);
+      if (!signedAt || !expiresSeconds) return new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString();
+      const matched = signedAt.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+      if (!matched) return new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString();
+      const [, year, month, day, hour, minute, second] = matched;
+      const startedAt = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+      return new Date(startedAt + expiresSeconds * 1000).toISOString();
+    } catch {
+      return new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString();
+    }
+  }
+
+  private activeProviderSource(asset: { referencePaths?: unknown } | undefined) {
+    const entries = Array.isArray(asset?.referencePaths) ? asset.referencePaths : [];
+    const metadata = entries.find((entry) => entry && typeof entry === 'object' && 'providerSourceUrl' in entry) as AnyRecord | undefined;
+    const url = String(metadata?.providerSourceUrl || '');
+    const expiresAt = Date.parse(String(metadata?.providerExpiresAt || ''));
+    return /^https?:\/\//.test(url) && Number.isFinite(expiresAt) && expiresAt > Date.now() + 5 * 60 * 1000 ? url : '';
+  }
+
   async uploadImage(ownerId: string, file?: { buffer: Buffer; mimetype: string; size: number; originalname: string }) {
     if (!file?.buffer?.length) this.fail('UPLOAD_FILE_REQUIRED', '请选择需要上传的图片');
     if (!file.mimetype.startsWith('image/')) this.fail('UPLOAD_IMAGE_ONLY', '只支持上传图片文件');
@@ -307,7 +330,15 @@ export class WhatifService {
     }
     const works = await this.feedWorks(0, 6);
     return {
-      hero: { id: 'hero-rain-reunion', workId: 'work-001', title: '假如你和江屿在城市尽头重逢', subtitle: '都市爱情 · 久别重逢 · 第 1 幕 · 15 秒', coverUrl: `${ASSET_BASE}/cinema.png`, durationSeconds: 15 },
+      hero: {
+        id: 'hero-gym-restart',
+        workId: 'work-001',
+        title: '如果今天重新开始',
+        subtitle: '都市成长 · 健身房 · 第 1 幕 · 15 秒',
+        coverUrl: `${ASSET_BASE}/demo-covers/gym-restart.png`,
+        videoUrl: `${ASSET_BASE}/demo-videos/gym-restart.m4v`,
+        durationSeconds: 15,
+      },
       statusCard: statusCard || { type: 'no_character', title: '开始创建你的平行世界', description: 'AI 自动完成专业分镜与 15 秒成片', actionLabel: '开始创作', characters: [] },
       works,
       nextCursor: this.encodeCursor(works.length),
@@ -430,6 +461,7 @@ export class WhatifService {
           bodyLeft: assetViews['body-left'] || '',
           bodyRight: assetViews['body-right'] || '',
           bodyBack: assetViews['body-back'] || '',
+          seedanceMaster: assetViews['seedance-master'] || '',
         },
       };
     }));
@@ -555,7 +587,7 @@ export class WhatifService {
     const generated = await this.ai.generateCharacterAsset({ name: character.name, description: profile.stableDescription, identityAnchors: profile.identityAnchors, kind: String(body.kind || 'identity-face'), instruction: String(body.instruction || ''), referenceImages: Array.isArray(body.referenceImages) ? body.referenceImages.map(String) : [], previousAsset: String(body.previousAsset || '') });
     const imagePath = await this.archiveRemote(generated.imageUrl, `${characterId}-${body.kind || 'asset'}`);
     const assetId = this.id('character_asset');
-    await this.db.insert(whatifCharacterAssets).values({ id: assetId, characterId, ownerId, version: character.currentVersion, kind: String(body.kind || 'identity-face'), status: 'ready', referencePaths: body.referenceImages || [], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, confirmed: false });
+    await this.db.insert(whatifCharacterAssets).values({ id: assetId, characterId, ownerId, version: character.currentVersion, kind: String(body.kind || 'identity-face'), status: 'ready', referencePaths: [...(Array.isArray(body.referenceImages) ? body.referenceImages : []), { provider: generated.provider, providerModel: generated.providerModel, provenance: 'seedream-generated' }], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, confirmed: false });
     return { taskId: assetId, status: 'success', assetId, kind: String(body.kind || 'identity-face'), imageUrl: await this.signed(imagePath), profile, traceId: generated.traceId };
   }
 
@@ -566,12 +598,20 @@ export class WhatifService {
     if (assets.length !== assetIds.length || assets.some((item) => item.status !== 'ready' || !item.imagePath)) this.fail('CHARACTER_ASSET_INVALID', '人物资产不存在或尚未生成完成');
     const kinds = new Set(assets.map((item) => item.kind));
     if (!kinds.has('identity-face') || !kinds.has('body-front')) this.fail('CHARACTER_MASTER_INCOMPLETE', '需要同时确认身份脸和正面全身形象');
+    const [character] = await this.db.select().from(whatifCharacters).where(and(eq(whatifCharacters.id, characterId), eq(whatifCharacters.ownerId, ownerId))).limit(1);
+    if (!character) throw new NotFoundException({ code: 'CHARACTER_NOT_FOUND', message: '角色不存在' });
     const identity = assets.find((item) => item.kind === 'identity-face')!;
+    const bodyFront = assets.find((item) => item.kind === 'body-front')!;
+    const sourceImage = await this.signed(bodyFront.imagePath);
+    const seedanceMaster = await this.ai.generateSeedanceCharacterMaster({ name: character.name, description: character.description, sourceImage });
+    const seedanceMasterPath = await this.archiveRemote(seedanceMaster.imageUrl, `${characterId}-seedance-master`);
+    const seedanceMasterId = this.id('character_asset');
     await this.db.transaction(async (tx) => {
       await tx.update(whatifCharacterAssets).set({ confirmed: true, updatedAt: new Date() }).where(and(eq(whatifCharacterAssets.ownerId, ownerId), inArray(whatifCharacterAssets.id, assetIds)));
+      await tx.insert(whatifCharacterAssets).values({ id: seedanceMasterId, characterId, ownerId, version: character.currentVersion, kind: 'seedance-master', status: 'ready', referencePaths: [{ sourceAssetId: bodyFront.id, provider: seedanceMaster.provider, providerModel: seedanceMaster.providerModel, provenance: 'seedream-normalized-for-seedance', providerSourceUrl: seedanceMaster.imageUrl, providerExpiresAt: this.providerUrlExpiresAt(seedanceMaster.imageUrl) }], imagePath: seedanceMasterPath, promptVersion: seedanceMaster.promptVersion, modelTraceId: seedanceMaster.traceId, confirmed: true });
       await tx.update(whatifCharacters).set({ masterAssetId: identity.id, avatarPath: identity.imagePath, status: 'active', updatedAt: new Date() }).where(and(eq(whatifCharacters.id, characterId), eq(whatifCharacters.ownerId, ownerId)));
     });
-    return { confirmed: true, characterId, traceId: this.traceId() };
+    return { confirmed: true, characterId, seedanceAssetId: seedanceMasterId, traceId: this.traceId() };
   }
 
   async createWorldview(ownerId: string, body: AnyRecord) {
@@ -718,34 +758,49 @@ export class WhatifService {
     }
   }
 
-  private async referenceAssetsFromSnapshots(characters: AnyRecord[], worldview: AnyRecord) {
+  private async ensureSeedanceCharacterMaster(ownerId: string, character: AnyRecord) {
+    const characterId = String(character.characterId || character.id || '');
+    if (!characterId) this.fail('CHARACTER_ID_MISSING', '人物资产缺少角色标识');
+    const [existing] = await this.db.select().from(whatifCharacterAssets)
+      .where(and(eq(whatifCharacterAssets.ownerId, ownerId), eq(whatifCharacterAssets.characterId, characterId), eq(whatifCharacterAssets.kind, 'seedance-master'), eq(whatifCharacterAssets.status, 'ready'), eq(whatifCharacterAssets.confirmed, true)))
+      .orderBy(desc(whatifCharacterAssets.createdAt)).limit(1);
+    const activeProviderSource = this.activeProviderSource(existing);
+    if (activeProviderSource) return activeProviderSource;
+
+    const source = existing?.imagePath || character.assetViews?.bodyFront || character.assetViews?.identityFace || character.avatarUrl;
+    const sourceImage = await this.modelReference(source);
+    if (!sourceImage) this.fail('SEEDANCE_CHARACTER_SOURCE_MISSING', `${String(character.name || '所选人物')}缺少可用人物图，请重新选择或生成人物资产`);
+    const generated = await this.ai.generateSeedanceCharacterMaster({ name: String(character.name || '故事角色'), description: String(character.description || character.summary || ''), sourceImage });
+    const imagePath = await this.archiveRemote(generated.imageUrl, `${characterId}-seedance-master`);
+    await this.db.insert(whatifCharacterAssets).values({ id: this.id('character_asset'), characterId, ownerId, version: Number(character.assetVersion || character.characterVersion || 1), kind: 'seedance-master', status: 'ready', referencePaths: [{ source: sourceImage, provider: generated.provider, providerModel: generated.providerModel, provenance: 'seedream-normalized-for-seedance', providerSourceUrl: generated.imageUrl, providerExpiresAt: this.providerUrlExpiresAt(generated.imageUrl) }], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, confirmed: true });
+    return generated.imageUrl;
+  }
+
+  private async referenceAssetsFromSnapshots(ownerId: string, characters: AnyRecord[], worldview: AnyRecord) {
     const selected: Array<{ source: unknown; purpose: string; category: 'character_identity' | 'character_body' | 'world_style' }> = [];
     const add = (source: unknown, purpose: string, category: 'character_identity' | 'character_body' | 'world_style') => {
       if (source) selected.push({ source, purpose, category });
     };
 
-    // Identity images are the highest priority for multi-character face consistency.
-    for (const character of characters) {
+    // A single Seedream-normalized master per actor preserves the provider
+    // provenance that Seedance uses to accept fictional identity references.
+    const masters: string[] = [];
+    for (let index = 0; index < characters.length; index += 2) {
+      masters.push(...await Promise.all(characters.slice(index, index + 2).map((character) => this.ensureSeedanceCharacterMaster(ownerId, character))));
+    }
+    characters.forEach((character, index) => {
       add(
-        character.assetViews?.identityFace || character.avatarUrl,
-        `${String(character.name || '该角色')}的人物身份参考，只锁定该角色的脸、发型、年龄与辨识特征`,
+        masters[index],
+        `${String(character.name || '该角色')}的 Seedance 人物身份与全身形象主参考，只允许绑定该角色，锁定脸、发型、成年年龄、体型和基础造型`,
         'character_identity',
       );
-    }
+    });
     // Keep the story world available before optional body references consume the 9-image allowance.
     add(
       worldview?.coverUrl,
       `${String(worldview?.name || '本故事')}的世界与场景美术参考，只锁定时代、环境、材质、色彩与光线`,
       'world_style',
     );
-    for (const character of characters) {
-      add(
-        character.assetViews?.bodyFront,
-        `${String(character.name || '该角色')}的全身造型参考，只锁定身材比例、基础服装与整体轮廓`,
-        'character_body',
-      );
-    }
-
     const resolved = await Promise.all(selected.map(async (item) => ({
       url: await this.modelReference(item.source),
       purpose: item.purpose,
@@ -792,7 +847,7 @@ export class WhatifService {
       ? this.ai.normalizeDirectorPlan(body.directorPlan, context.casts)
       : this.ai.buildDirectScene(directionInput);
     if (directorPlan.capacity?.status === 'overflow' && body.force !== true) this.fail('SCENE_CAPACITY_OVERFLOW', directorPlan.capacity.message || '这一幕超过 15 秒，请缩短或拆成两幕', 422, { suggestedScript: directorPlan.capacity.suggestedScript });
-    const referenceAssets = await this.referenceAssetsFromSnapshots(context.casts, context.worldview);
+    const referenceAssets = await this.referenceAssetsFromSnapshots(ownerId, context.casts, context.worldview);
     const compilationInput = {
       story: { title: context.draft.title, setting: context.draft.setting, worldview: context.worldview },
       characters: context.casts,
@@ -854,7 +909,6 @@ export class WhatifService {
         promptBody: `${compilation.promptBody}\n${styleLockPrompt}\nNegative constraints: ${compilation.negativePrompt}`,
         referenceImages,
         referenceAssets,
-        copyrightSafePrompt: `${compilation.textOnlyPrompt}\n${styleLockPrompt}\nNegative constraints: ${compilation.negativePrompt}\nAll people are original fictional adults. If identity references are unavailable, preserve the locked worldview and exact visual medium from text; do not change the story into animation, 3D, illustration or another style.`,
         traceId,
         taskId,
         sceneId,
