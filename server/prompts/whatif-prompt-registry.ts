@@ -1,7 +1,7 @@
 export const PROMPT_VERSIONS = {
   characterProfile: 'character-profile-v2',
   characterAsset: 'character-asset-v2',
-  seedanceCharacterMaster: 'seedance-character-master-v1',
+  seedanceCharacterMaster: 'seedance-character-master-v2',
   storyDirector: 'story-director-v5',
   storyDirect: 'story-direct-v3',
   seedanceCompiler: 'seedance-compiler-v5',
@@ -57,10 +57,11 @@ Output only one adult person and one requested view. No collage, split screen, e
 `;
 
 export const SEEDANCE_CHARACTER_MASTER_PROMPT = `
-Create one Seedance-compatible identity master for an original fictional adult character. Use the supplied image only as the identity source for {{NAME}}. Preserve the same recognizable fictional face, facial proportions, hairstyle, adult age, body proportions and distinguishing features while rebuilding the result as a clean original AIGC character asset.
+Create one Seedance-compatible identity master for an original fictional adult character named {{NAME}}.
 
 Character name: {{NAME}}
 Stable identity description: {{DESCRIPTION}}
+Identity source rule: {{SOURCE_INSTRUCTION}}
 
 Output one front-facing full-body adult person from head to toe on a clean warm-white studio background. Use realistic two-dimensional studio photography, a restrained neutral urban base outfit, eye-level camera, soft even light, natural skin, hair and fabric, neutral expression and relaxed straight posture. The face must remain large and clear enough to identify in later video generation.
 

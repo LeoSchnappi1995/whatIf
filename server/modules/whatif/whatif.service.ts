@@ -268,9 +268,13 @@ export class WhatifService {
     }
   }
 
-  private activeProviderSource(asset: { referencePaths?: unknown } | undefined) {
+  private providerMetadata(asset: { referencePaths?: unknown } | undefined) {
     const entries = Array.isArray(asset?.referencePaths) ? asset.referencePaths : [];
-    const metadata = entries.find((entry) => entry && typeof entry === 'object' && 'providerSourceUrl' in entry) as AnyRecord | undefined;
+    return entries.find((entry) => entry && typeof entry === 'object' && ('providerSourceUrl' in entry || 'provenance' in entry)) as AnyRecord | undefined;
+  }
+
+  private activeProviderSource(asset: { referencePaths?: unknown } | undefined) {
+    const metadata = this.providerMetadata(asset);
     const url = String(metadata?.providerSourceUrl || '');
     const expiresAt = Date.parse(String(metadata?.providerExpiresAt || ''));
     return /^https?:\/\//.test(url) && Number.isFinite(expiresAt) && expiresAt > Date.now() + 5 * 60 * 1000 ? url : '';
@@ -761,19 +765,27 @@ export class WhatifService {
   private async ensureSeedanceCharacterMaster(ownerId: string, character: AnyRecord) {
     const characterId = String(character.characterId || character.id || '');
     if (!characterId) this.fail('CHARACTER_ID_MISSING', '人物资产缺少角色标识');
+    const isLibraryCharacter = character.sourceType === 'official' || characterId.startsWith('builtin-') || characterId.startsWith('official-');
     const [existing] = await this.db.select().from(whatifCharacterAssets)
       .where(and(eq(whatifCharacterAssets.ownerId, ownerId), eq(whatifCharacterAssets.characterId, characterId), eq(whatifCharacterAssets.kind, 'seedance-master'), eq(whatifCharacterAssets.status, 'ready'), eq(whatifCharacterAssets.confirmed, true)))
       .orderBy(desc(whatifCharacterAssets.createdAt)).limit(1);
-    const activeProviderSource = this.activeProviderSource(existing);
+    const existingMetadata = this.providerMetadata(existing);
+    const isCurrentLibraryMaster = isLibraryCharacter
+      && existing?.imagePath
+      && existing.promptVersion === PROMPT_VERSIONS.seedanceCharacterMaster
+      && existingMetadata?.provenance === 'seedream-text-original'
+      && existingMetadata?.source === 'text-only-original-character';
+    if (isCurrentLibraryMaster) return this.signed(existing.imagePath);
+    const activeProviderSource = isLibraryCharacter ? '' : this.activeProviderSource(existing);
     if (activeProviderSource) return activeProviderSource;
 
-    const source = existing?.imagePath || character.assetViews?.bodyFront || character.assetViews?.identityFace || character.avatarUrl;
-    const sourceImage = await this.modelReference(source);
-    if (!sourceImage) this.fail('SEEDANCE_CHARACTER_SOURCE_MISSING', `${String(character.name || '所选人物')}缺少可用人物图，请重新选择或生成人物资产`);
+    const source = isLibraryCharacter ? '' : existing?.imagePath || character.assetViews?.bodyFront || character.assetViews?.identityFace || character.avatarUrl;
+    const sourceImage = source ? await this.modelReference(source) : '';
+    if (!isLibraryCharacter && !sourceImage) this.fail('SEEDANCE_CHARACTER_SOURCE_MISSING', `${String(character.name || '所选人物')}缺少可用人物图，请重新选择或生成人物资产`);
     const generated = await this.ai.generateSeedanceCharacterMaster({ name: String(character.name || '故事角色'), description: String(character.description || character.summary || ''), sourceImage });
     const imagePath = await this.archiveRemote(generated.imageUrl, `${characterId}-seedance-master`);
-    await this.db.insert(whatifCharacterAssets).values({ id: this.id('character_asset'), characterId, ownerId, version: Number(character.assetVersion || character.characterVersion || 1), kind: 'seedance-master', status: 'ready', referencePaths: [{ source: sourceImage, provider: generated.provider, providerModel: generated.providerModel, provenance: 'seedream-normalized-for-seedance', providerSourceUrl: generated.imageUrl, providerExpiresAt: this.providerUrlExpiresAt(generated.imageUrl) }], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, confirmed: true });
-    return generated.imageUrl;
+    await this.db.insert(whatifCharacterAssets).values({ id: this.id('character_asset'), characterId, ownerId, version: Number(character.assetVersion || character.characterVersion || 1), kind: 'seedance-master', status: 'ready', referencePaths: [{ source: sourceImage || 'text-only-original-character', provider: generated.provider, providerModel: generated.providerModel, provenance: isLibraryCharacter ? 'seedream-text-original' : 'seedream-normalized-for-seedance', providerSourceUrl: generated.imageUrl, providerExpiresAt: this.providerUrlExpiresAt(generated.imageUrl) }], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, confirmed: true });
+    return isLibraryCharacter ? this.signed(imagePath) : generated.imageUrl;
   }
 
   private async referenceAssetsFromSnapshots(ownerId: string, characters: AnyRecord[], worldview: AnyRecord) {
