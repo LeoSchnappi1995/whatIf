@@ -449,30 +449,36 @@ export class WhatifAiService {
     return { imageUrl, traceId, promptVersion: PROMPT_VERSIONS.characterAsset, provider: usingGateway ? 'soul-seedream-gateway' : 'volcengine-ark', providerModel: this.imageModel };
   }
 
-  async generateSeedanceCharacterMaster(input: { name: string; description: string; sourceImage: string }) {
+  async generateSeedanceCharacterMaster(input: { name: string; description: string; sourceImage?: string }) {
     const usingGateway = this.imageGatewayEnabled && Boolean(this.imageGatewayBase && this.imageGatewayToken);
     const token = usingGateway ? this.imageGatewayToken : this.mediaKey;
     if (!token) throw this.codedError('SEEDANCE_CHARACTER_PREPARATION_NOT_CONFIGURED', '人物资产认证服务尚未配置', 503);
     const images = this.validImageUrls([input.sourceImage], 1);
-    if (!images.length) throw this.codedError('SEEDANCE_CHARACTER_SOURCE_REQUIRED', '人物资产缺少可用的身份参考图', 400);
-    const prompt = renderPrompt(SEEDANCE_CHARACTER_MASTER_PROMPT, { NAME: input.name, DESCRIPTION: input.description });
+    const prompt = renderPrompt(SEEDANCE_CHARACTER_MASTER_PROMPT, {
+      NAME: input.name,
+      DESCRIPTION: input.description,
+      SOURCE_INSTRUCTION: images.length
+        ? 'Use the supplied image only as the identity source. Preserve the same recognizable fictional face, facial proportions, hairstyle, adult age, body proportions and distinguishing features while rebuilding a clean original AIGC asset.'
+        : 'No identity image is supplied. Invent one fully original adult face from the stable description. Do not resemble any real person, celebrity or copyrighted character.',
+    });
     const endpoint = usingGateway ? `${this.imageGatewayBase}/v1/images/generations` : 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
     if (usingGateway && this.imageGatewayService) headers['soul-ai-service'] = this.imageGatewayService;
     const traceId = randomUUID();
+    const requestBody: Record<string, unknown> = {
+      model: this.imageModel,
+      prompt,
+      size: usingGateway ? '2048x2048' : '1024x1024',
+      response_format: 'url',
+      sequential_image_generation: 'disabled',
+      stream: false,
+      watermark: false,
+    };
+    if (images.length) requestBody.image = images;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { ...headers, 'x-story-trace-id': traceId },
-      body: JSON.stringify({
-        model: this.imageModel,
-        prompt,
-        image: images,
-        size: usingGateway ? '2048x2048' : '1024x1024',
-        response_format: 'url',
-        sequential_image_generation: 'disabled',
-        stream: false,
-        watermark: false,
-      }),
+      body: JSON.stringify(requestBody),
     });
     const data: any = await response.json();
     if (!response.ok) throw this.codedError(`SEEDANCE_CHARACTER_PREPARATION_HTTP_${response.status}`, this.upstreamMessage(data, `人物资产认证失败：${response.status}`), 502, data);
