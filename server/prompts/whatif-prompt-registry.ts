@@ -1,10 +1,10 @@
 export const PROMPT_VERSIONS = {
   characterProfile: 'character-profile-v2',
   characterAsset: 'character-asset-v2',
-  storyDirector: 'story-director-v4',
-  storyDirect: 'story-direct-v2',
-  seedanceCompiler: 'seedance-compiler-v4',
-  seedanceDirect: 'seedance-direct-v2',
+  storyDirector: 'story-director-v5',
+  storyDirect: 'story-direct-v3',
+  seedanceCompiler: 'seedance-compiler-v5',
+  seedanceDirect: 'seedance-direct-v3',
   publicationCopy: 'publication-copy-v2',
 } as const;
 
@@ -60,16 +60,16 @@ export const STORY_DIRECTOR_PROMPT = `
 
 最高原则：
 1. 不改变用户明确的人物、关系、关键事件、关键台词、结局和情绪方向。
-2. 只讲清一个 15 秒核心事件，必须有起因、动作推进、情绪转折和可感知的结果；禁止预告片、蒙太奇、四格漫画和跨多个地点拼接。
+2. 只讲清一个 15 秒核心事件。先判断用户事件真正需要被看见的叙事任务，再选择最少且足够的镜头；禁止套用固定三段式、预告片、蒙太奇、四格漫画和跨多个地点拼接。
 3. 自动完成本幕服装、场景生产设计、关键道具、声音、表演、镜头和节奏，用户不需要填写专业参数。
-4. 上一镜头的 stateOut 必须成为下一镜头的 stateIn；每个镜头都有可见动作，避免站立、对视、微笑、慢推静帧造成幻灯片感。
+4. 可根据动作复杂度使用 1-4 个镜头，能用一个连续镜头讲清时不要强拆。多镜头时，上一镜头的 stateOut 必须成为下一镜头的 stateIn；每个镜头都有可见动作，避免站立、对视、微笑、慢推静帧造成幻灯片感。
 5. 世界观必须通过美术、声音、动作或环境规则被看见；继承已确认的人物、世界观、画风、上一幕结束状态和关键道具。
 6. 对话最多 2 句；用户明确写出的对白逐字复制，不改写、不重复、不新增同义句。
 7. 只有明显无法在 15 秒表达时才输出 overflow；边界输出 tight；正常输出 ok，并给出不改变核心意图的拆分或精简建议。
-8. 每个镜头写 9:16 手机竖屏下的景别、机位、运镜、人物走位、动作匹配剪辑点和声音。总时长严格为 15 秒。
+8. 每个镜头写 9:16 手机竖屏下的主体绑定、具体身体动作、空间关系、景别、机位、一种主要运镜、表情外化、声音和必要的动作匹配剪辑点。time 只用于表达大致剪辑占比，不宣称视频模型能精确命中秒点；整条成片约 15 秒。
 9. 用户未点名的专业细节以“85分首稿”为目标自动决定，但不得将它表述为已验证质量数据。
 10. 如果输入 userRefinements 中包含 target、instruction 和 approvedPlan，只修改 target 指定对象；逐字段继承 approvedPlan 的其他内容。局部修改不得重写未点名的人物、场景、道具、声音、镜头或连续性资产。
-11. 不得把用户的一句话原样复制到多个镜头。先提取“触发信息 -> 可见行动/发现证据 -> 人物反应与结果”三段因果，再为每段写不同的可拍动作。action 禁止出现“进入用户事件”“完成核心动作”“呈现结果”等元描述。
+11. 不得把用户的一句话原样复制到多个镜头。根据题材选择真实的动作与信息推进关系，例如动作的准备与完成、信息的出现与确认、人物的行动与反应；不强制“触发—转折—结果”模板。每个 action 必须是不同且可拍的身体动作或屏幕操作，禁止出现“进入用户事件”“完成核心动作”“呈现结果”等元描述。
 12. 人物资产列表只表示本故事可用演员，不代表所有人物每个镜头都要出现。每个镜头必须明确 visibleCharacters、screenOnlyCharacters、excludedCharacters：
    - visibleCharacters：允许以真人身体或脸出现在当前画面中的角色；
    - screenOnlyCharacters：只允许出现在手机、电脑或其他屏幕内容中的角色；
@@ -88,7 +88,7 @@ export const STORY_DIRECTOR_PROMPT = `
   "capacity":{"status":"ok|tight|overflow","message":"用户可理解的说明","suggestedScript":"仅overflow/tight时给出"},
   "visual":{"looks":{"角色名":"本幕造型与服装"},"scene":"可视化场景生产设计","props":"具体关键道具或无关键道具","sound":"环境与动作声音","continuity":"连续性锁"},
   "audio":{"voiceCasting":{"角色名":"稳定声线"},"ambience":"环境音","music":"音乐策略","mix":"混音优先级","durationPlan":"15秒节奏"},
-  "shots":[{"time":"0-4秒","title":"镜头名","visibleCharacters":["当前画面允许出现的角色名"],"screenOnlyCharacters":["只允许出现在设备屏幕中的角色名"],"excludedCharacters":["当前镜头完全禁止出现的其他角色名"],"stateIn":"起始状态","action":"不可复述摘要的具体可见动作","stateOut":"结束状态","camera":"景别机位运镜和剪辑","sound":"动作/环境声","dialogue":"逐字对白或空","speaker":"角色名或空","emotion":"可表演情绪"}],
+  "shots":[{"time":"大致剪辑区间，如约0-5秒；单镜头可写约15秒连续镜头","title":"镜头名","visibleCharacters":["当前画面允许出现的角色名"],"screenOnlyCharacters":["只允许出现在设备屏幕中的角色名"],"excludedCharacters":["当前镜头完全禁止出现的其他角色名"],"stateIn":"起始状态","action":"不可复述摘要的具体可见动作","stateOut":"结束状态","camera":"主体、空间关系、景别、机位、一种主要运镜和必要剪辑","sound":"动作/环境声","dialogue":"逐字对白或空","speaker":"角色名或空","emotion":"可表演情绪"}],
   "continuityOut":{"characterStates":"下一幕需要继承的人物状态","sceneState":"场景状态","propStates":"道具状态","openQuestion":"可供续写的余韵"}
 }
 `;
@@ -105,7 +105,7 @@ export const SEEDANCE_COMPILER_PROMPT = `
 2. 最终 Prompt 开头必须先写清素材绑定。例如：“@图片1 是林夏的人物身份参考；@图片2 是江屿的人物身份参考；@图片3 是世界与场景参考。”多角色第一次出现时必须把角色姓名与对应的 @图片N 放在一起。
 3. 严格按素材用途使用参考图：人物身份图只锁定对应人物的脸、发型、年龄和辨识特征；人物全身图只锁定对应人物的身材比例、基础服装和整体轮廓；世界观图只锁定场景美术、时代、材质、色彩和光线。不得把一张图的人脸、服装或背景错误迁移给另一张图。
 4. 参考图只负责其已标注的身份、造型、场景或道具一致性，不得照抄无关姿势、构图、文字、Logo、水印和背景。多张图冲突时，以人物身份图的人脸、人物全身图的体态、世界观图的环境为各自维度的最高优先级。
-5. 按 0-15 秒时间轴写动作、镜头、表演、对白、环境音、动作音和音乐。上一段动作的结束状态必须成为下一段的开始状态，避免静态摆拍、慢推静帧和幻灯片。
+5. 按 Shot 1、Shot 2……的自然顺序写动作、镜头、表演、对白、环境音、动作音和音乐；导演方案中的 time 只表示大致剪辑占比，不要求模型精确命中秒点。上一镜头动作的结束状态必须成为下一镜头的开始状态，避免静态摆拍、慢推静帧和幻灯片。
 6. 每个角色只能由自己绑定的参考图控制；画面中必须保持角色数量、姓名、位置、视线和动作关系清楚，禁止角色融合、换脸、互换服装或凭空增加人物。
 7. 对白逐字保留，最多两句；注明说话人、出现时间、情绪和口型要求。没有对白时不要强加对白。
 8. 世界观必须在建筑、环境规则、道具、光线、声音或人物动作中被感知，不能退化为普通无关背景；同时继承上一幕 continuityOut。
@@ -115,7 +115,7 @@ export const SEEDANCE_COMPILER_PROMPT = `
 12. 每个时间段开头必须写清 Physical on-screen cast、Screen-only cast、Must not appear。全局 Characters 只定义身份，不授予每个角色在每个镜头出镜的权限。
 13. 当 visibleCharacters 只有一个角色时，必须写“ONLY [角色] is physically visible in this shot”；excludedCharacters 中的角色不得以身体、脸、背景路人、倒影、照片、屏幕头像或自动补帧的方式出现。
 14. 镜头切换必须显式描述退场和入画。上一镜头人物离开画面后，下一镜头不能因为参考图或全局角色列表将其重新生成。
-15. 最终 Prompt 中的时间轴必须描述三个不同的叙事任务：触发、发现/行动、反应/结果。若任何两个时间段的 action 实质相同，必须重新拆解后再输出。
+15. 最终 Prompt 不得套用固定三段式或固定镜头数。每个 Shot 必须承担必要且不同的可见任务；若两个 action 实质相同，应合并镜头或重新设计具体动作，不得重复用户摘要充当时间轴。
 
 输入 JSON：
 {{INPUT_JSON}}

@@ -79,7 +79,12 @@ export async function createStoryDraft(input?: {
 
 export async function whatifRequest<T>(
   url: string,
-  options?: { method?: 'GET' | 'POST' | 'PUT' | 'PATCH'; data?: unknown; params?: Record<string, unknown> },
+  options?: {
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH';
+    data?: unknown;
+    params?: Record<string, unknown>;
+    timeoutMs?: number;
+  },
 ): Promise<T> {
   try {
     const response = await axiosForBackend({
@@ -88,6 +93,7 @@ export async function whatifRequest<T>(
       data: options?.data,
       params: options?.params,
       headers: whatifHeaders(),
+      timeout: options?.timeoutMs,
     });
     return response.data as T;
   } catch (error) {

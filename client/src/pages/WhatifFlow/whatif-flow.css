@@ -642,6 +642,22 @@
   color: #a0a7a8;
   font-size: 8px;
 }
+.board-placeholder.error {
+  padding: 20px;
+  color: #a34755;
+  text-align: center;
+}
+.board-placeholder.error > p {
+  max-width: 260px;
+  margin: -2px 0 2px;
+  color: #9a6870;
+  font-size: 8px;
+  line-height: 1.5;
+}
+.board-placeholder.error > button {
+  background: #292d2e;
+  color: #fff;
+}
 .board-regenerate {
   width: calc(100% - 26px);
   height: 36px;

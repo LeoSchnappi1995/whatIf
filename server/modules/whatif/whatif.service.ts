@@ -781,12 +781,12 @@ export class WhatifService {
     const previous = await this.previousScene(ownerId, body.parentSceneId ? String(body.parentSceneId) : undefined);
     const hasProfessionalPlan = Boolean(body.directorPlan && Array.isArray(body.directorPlan.shots));
     const directionInput = { script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous };
-    // The storyboard preview is optional, but the professional directing step is not.
-    // When the user skips preview, complete the same director workflow in the background
-    // instead of sending a repeated three-beat placeholder to Seedance.
+    // The storyboard preview is optional. When the user skips it, do not block
+    // video creation on the text model: preserve the raw user direction as one
+    // continuous shootable event and let the deterministic compiler continue.
     const directorPlan = hasProfessionalPlan
       ? this.ai.normalizeDirectorPlan(body.directorPlan, context.casts)
-      : await this.ai.directScene(directionInput);
+      : this.ai.buildDirectScene(directionInput);
     if (directorPlan.capacity?.status === 'overflow' && body.force !== true) this.fail('SCENE_CAPACITY_OVERFLOW', directorPlan.capacity.message || '这一幕超过 15 秒，请缩短或拆成两幕', 422, { suggestedScript: directorPlan.capacity.suggestedScript });
     const referenceAssets = await this.referenceAssetsFromSnapshots(context.casts, context.worldview);
     const compilationInput = {
@@ -818,7 +818,7 @@ export class WhatifService {
         characters: context.casts,
         previous,
         directorPlan,
-        directionMode: hasProfessionalPlan ? 'approved_professional_storyboard' : 'auto_professional_storyboard',
+        directionMode: hasProfessionalPlan ? 'approved_professional_storyboard' : 'direct_user_script',
       },
       compilation,
       referenceAssets,
