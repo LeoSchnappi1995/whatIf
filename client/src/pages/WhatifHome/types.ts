@@ -53,9 +53,12 @@ export interface WhatifWork {
   likeCount: number;
   durationSeconds: number;
   workId?: string;
+  targetPath?: string;
   videoUrl?: string;
   canRemix?: boolean;
   templateId?: string;
+  sourceType?: 'generated_story' | 'template' | 'publication';
+  sceneCount?: number;
 }
 
 export interface WhatifHomeResponse {

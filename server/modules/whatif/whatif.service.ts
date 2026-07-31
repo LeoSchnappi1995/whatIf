@@ -343,7 +343,7 @@ export class WhatifService {
       if (!this.isMissingTable(error)) throw error;
       this.logger.warn('Whatif tables are not migrated yet; homepage uses configuration fallback.');
     }
-    const works = await this.feedWorks(0, 6);
+    const feed = await this.feedWorks(ownerId, 0, 6);
     return {
       hero: {
         id: 'hero-gym-restart',
@@ -355,32 +355,102 @@ export class WhatifService {
         durationSeconds: 15,
       },
       statusCard: statusCard || { type: 'no_character', title: '开始创建你的平行世界', description: 'AI 自动完成专业分镜与 15 秒成片', actionLabel: '开始创作', characters: [] },
-      works,
-      nextCursor: this.encodeCursor(works.length),
-      hasMore: fallbackWorks.length > works.length,
+      works: feed.works,
+      nextCursor: feed.nextCursor,
+      hasMore: feed.hasMore,
       traceId: this.traceId(),
     };
   }
 
-  private async feedWorks(offset: number, pageSize: number) {
+  private async generatedStoryWorks(ownerId: string) {
+    try {
+      const stories = await this.db.select().from(whatifStories)
+        .where(eq(whatifStories.ownerId, ownerId))
+        .orderBy(desc(whatifStories.updatedAt));
+      if (!stories.length) return [];
+      const storyIds = stories.map((story) => story.id);
+      const scenes = await this.db.select().from(whatifScenes)
+        .where(and(eq(whatifScenes.ownerId, ownerId), inArray(whatifScenes.storyId, storyIds)))
+        .orderBy(whatifScenes.sequence, whatifScenes.createdAt);
+      if (!scenes.length) return [];
+      const tasks = await this.db.select().from(whatifVideoTasks)
+        .where(and(eq(whatifVideoTasks.ownerId, ownerId), inArray(whatifVideoTasks.sceneId, scenes.map((scene) => scene.id)), eq(whatifVideoTasks.status, 'success')))
+        .orderBy(desc(whatifVideoTasks.updatedAt));
+      const taskForScene = (sceneId: string, selectedResultId?: string | null) => (
+        tasks.find((task) => task.id === selectedResultId)
+        || tasks.find((task) => task.sceneId === sceneId)
+      );
+      return Promise.all(stories.map(async (story) => {
+        const storyScenes = scenes.filter((scene) => scene.storyId === story.id);
+        const successfulScenes = storyScenes
+          .map((scene) => ({ scene, task: taskForScene(scene.id, scene.selectedResultId) }))
+          .filter((item) => item.task);
+        if (!successfulScenes.length) return null;
+        const first = successfulScenes[0];
+        const latest = successfulScenes.at(-1) || first;
+        const firstMedia = this.ai.videoMedia(first.task?.responseSnapshot);
+        const coverUrl = await this.signed(first.task?.posterPath)
+          || await this.signed(first.task?.lastFramePath)
+          || firstMedia.firstFrameUrl
+          || firstMedia.lastFrameUrl
+          || await this.signed(story.coverPath)
+          || `${ASSET_BASE}/cinema.png`;
+        const subtitle = [
+          `${successfulScenes.length}幕已生成`,
+          story.setting || (latest.scene.directorPlan as AnyRecord)?.summary || latest.scene.userScript || '',
+        ].filter(Boolean).join(' · ');
+        return {
+          id: `story-work:${story.id}`,
+          workId: story.id,
+          targetPath: `/stories/${story.id}/timeline`,
+          sourceType: 'generated_story',
+          title: story.title,
+          subtitle,
+          coverUrl,
+          videoUrl: await this.signed(latest.task?.videoPath),
+          authorName: '我的故事',
+          avatarUrl: `${ASSET_BASE}/self.jpg`,
+          likeCount: 0,
+          durationSeconds: successfulScenes.reduce((total, item) => total + Number(item.task?.durationSeconds || 15), 0),
+          canRemix: false,
+          sceneCount: successfulScenes.length,
+          updatedAt: story.updatedAt,
+        };
+      })).then((items) => items.filter(Boolean) as AnyRecord[]);
+    } catch (error) {
+      if (!this.isMissingTable(error)) throw error;
+      return [];
+    }
+  }
+
+  private async feedWorks(ownerId: string, offset: number, pageSize: number) {
+    const generated = await this.generatedStoryWorks(ownerId);
+    const publicWorks: AnyRecord[] = [];
     try {
       const rows = await this.db.select().from(whatifPublications)
         .where(and(eq(whatifPublications.status, 'published'), eq(whatifPublications.visibility, 'public')))
         .orderBy(desc(whatifPublications.likeCount), desc(whatifPublications.updatedAt))
-        .limit(pageSize).offset(offset);
-      if (rows.length) return Promise.all(rows.map(async (row) => ({ id: row.id, workId: row.id, title: row.title, subtitle: row.summary || '连续剧情 · 15秒一幕', coverUrl: await this.signed(row.coverPath), videoUrl: await this.signed(row.videoPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: row.likeCount, durationSeconds: Math.max(15, (Array.isArray(row.sceneIds) ? row.sceneIds.length : 1) * 15), canRemix: row.canRemix, templateId: row.canRemix ? `publication:${row.id}` : undefined })));
+        .limit(pageSize + offset + 1);
+      publicWorks.push(...await Promise.all(rows.map(async (row) => ({ id: row.id, workId: row.id, title: row.title, subtitle: row.summary || '连续剧情 · 15秒一幕', coverUrl: await this.signed(row.coverPath), videoUrl: await this.signed(row.videoPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: row.likeCount, durationSeconds: Math.max(15, (Array.isArray(row.sceneIds) ? row.sceneIds.length : 1) * 15), canRemix: row.canRemix, templateId: row.canRemix ? `publication:${row.id}` : undefined }))));
     } catch (error) {
       if (!this.isMissingTable(error)) throw error;
     }
-    return fallbackWorks.slice(offset, offset + pageSize);
+    const fallback = fallbackWorks.map((work) => ({ ...work, sourceType: 'template' }));
+    const combined = [...generated, ...publicWorks, ...fallback];
+    const page = combined.slice(offset, offset + pageSize);
+    const next = offset + page.length;
+    return {
+      works: page,
+      nextCursor: combined.length > next ? this.encodeCursor(next) : null,
+      hasMore: combined.length > next,
+    };
   }
 
-  async getWorks(cursor: string | undefined, requestedPageSize: number) {
+  async getWorks(ownerId: string, cursor: string | undefined, requestedPageSize: number) {
     const pageSize = Math.min(Math.max(requestedPageSize || 6, 2), 10);
     const start = this.decodeCursor(cursor);
-    const works = await this.feedWorks(start, pageSize);
-    const next = start + works.length;
-    return { works, nextCursor: this.encodeCursor(next), hasMore: works.length === pageSize, traceId: this.traceId() };
+    const page = await this.feedWorks(ownerId, start, pageSize);
+    return { ...page, traceId: this.traceId() };
   }
 
   async createStoryDraft(ownerId: string, body: AnyRecord) {

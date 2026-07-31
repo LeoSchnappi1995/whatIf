@@ -33,10 +33,11 @@ export class WhatifController {
 
   @Get('api/whatif/works')
   getWorks(
+    @Req() req: Request,
     @Query('cursor') cursor?: string,
     @Query('pageSize', new DefaultValuePipe(6), ParseIntPipe) pageSize = 6,
   ) {
-    return this.whatif.getWorks(cursor, pageSize);
+    return this.whatif.getWorks(this.owner(req), cursor, pageSize);
   }
 
   @Get('api/whatif/ai-config')
