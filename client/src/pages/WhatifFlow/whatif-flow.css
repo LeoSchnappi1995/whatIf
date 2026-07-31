@@ -601,13 +601,56 @@
 }
 .board-placeholder {
   display: flex;
-  height: 120px;
+  min-height: 150px;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   gap: 8px;
   color: #a0a7a8;
   font-size: 10px;
+}
+.board-placeholder > svg {
+  width: 24px;
+}
+.board-placeholder > button,
+.board-regenerate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #171c1d;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 750;
+}
+.board-placeholder > button {
+  min-width: 148px;
+  height: 38px;
+  padding: 0 18px;
+}
+.board-placeholder > button:disabled {
+  background: #dfe4e4;
+  color: #9ca5a6;
+}
+.board-placeholder > button svg,
+.board-regenerate svg {
+  width: 14px;
+}
+.board-placeholder > small {
+  color: #a0a7a8;
+  font-size: 8px;
+}
+.board-regenerate {
+  width: calc(100% - 26px);
+  height: 36px;
+  margin: 12px 13px 14px;
+  background: #eefafa;
+  color: #159f9a;
+}
+.board-regenerate:disabled {
+  opacity: 0.55;
 }
 .production-row {
   display: grid;
