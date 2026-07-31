@@ -206,9 +206,16 @@ export class WhatifAiService {
     };
   }
 
-  private async textJson(prompt: string, temperature = 0.55) {
+  private async textJson(
+    prompt: string,
+    temperature = 0.55,
+    options?: { timeoutMs?: number; allowProviderFallback?: boolean; gatewayAttempts?: number },
+  ) {
     const gatewayReady = Boolean(this.textGatewayBase && this.textGatewayToken && this.textGatewayModel);
     const deepseekReady = Boolean(this.deepseekKey);
+    const timeoutMs = options?.timeoutMs ?? 45_000;
+    const allowProviderFallback = options?.allowProviderFallback ?? true;
+    const gatewayAttempts = Math.max(1, Math.min(3, options?.gatewayAttempts ?? 3));
     if (!gatewayReady && !deepseekReady) {
       throw this.codedError('TEXT_MODEL_NOT_CONFIGURED', '豆包文字接口尚未配置', 503);
     }
@@ -218,10 +225,10 @@ export class WhatifAiService {
       token: string,
       model: string,
       service?: string,
-      timeoutMs = 45_000,
+      requestTimeoutMs = timeoutMs,
     ) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
       try {
         const headers: Record<string, string> = {
           Authorization: `Bearer ${token}`,
@@ -260,7 +267,7 @@ export class WhatifAiService {
 
     const gatewayRequest = async () => {
       let lastError: unknown;
-      for (const delayMs of [0, 3_000, 8_000]) {
+      for (const delayMs of [0, 3_000, 8_000].slice(0, gatewayAttempts)) {
         if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
         try {
           return await request(
@@ -285,7 +292,7 @@ export class WhatifAiService {
       }
       return await request(`${this.deepseekBase}/chat/completions`, this.deepseekKey, this.deepseekModel);
     } catch (error) {
-      if (gatewayReady && deepseekReady && process.env.MODEL_FALLBACK_ON_ERROR === 'true') {
+      if (allowProviderFallback && gatewayReady && deepseekReady && process.env.MODEL_FALLBACK_ON_ERROR === 'true') {
         this.logger.warn(`Soul text gateway failed; using configured fallback: ${error instanceof Error ? error.message : error}`);
         try {
           return await request(`${this.deepseekBase}/chat/completions`, this.deepseekKey, this.deepseekModel);
@@ -433,6 +440,7 @@ export class WhatifAiService {
       const result: any = await this.textJson(
         renderPrompt(STORY_DIRECTOR_PROMPT, { INPUT_JSON: JSON.stringify(input) }),
         0.45,
+        { timeoutMs: 12_000, allowProviderFallback: false, gatewayAttempts: 1 },
       );
       const shots = Array.isArray(result?.shots) ? result.shots.slice(0, 4) : [];
       if (shots.length < 2) throw this.codedError('DIRECTOR_INVALID_RESPONSE', 'AI 分镜不完整，请重新生成', 502);
@@ -470,6 +478,7 @@ export class WhatifAiService {
           INPUT_JSON: JSON.stringify(input),
         }),
         0.2,
+        { timeoutMs: 12_000, allowProviderFallback: false, gatewayAttempts: 1 },
       );
     } catch (error) {
       this.logger.warn(`Seedance compiler model failed; using deterministic compiler. reason=${error instanceof Error ? error.message : error}`);
