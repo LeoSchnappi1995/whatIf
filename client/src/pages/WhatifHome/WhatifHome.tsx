@@ -206,6 +206,7 @@ function StatusCard({
 }
 
 function WorkCard({ work, onOpen }: { work: WhatifWork; onOpen: () => void }) {
+  const isGeneratedStory = work.sourceType === 'generated_story';
   return (
     <article className="work-card" onClick={onOpen}>
       <div className="work-cover">
@@ -223,10 +224,7 @@ function WorkCard({ work, onOpen }: { work: WhatifWork; onOpen: () => void }) {
             <img src={resolveAppAssetUrl(work.avatarUrl)} alt="" />
             {work.authorName}
           </span>
-          <span>
-            <Heart size={12} />
-            {formatLikes(work.likeCount)}
-          </span>
+          {isGeneratedStory ? <span>{work.sceneCount || Math.max(1, Math.round(work.durationSeconds / 15))}幕</span> : <span><Heart size={12} />{formatLikes(work.likeCount)}</span>}
         </div>
       </div>
     </article>
@@ -356,6 +354,7 @@ export default function WhatifHome() {
       setBatchLoading(false);
     }
   };
+  const hasGeneratedStories = data?.works.some((work) => work.sourceType === 'generated_story') ?? false;
 
   if (loading) return <HomeSkeleton />;
 
@@ -433,8 +432,8 @@ export default function WhatifHome() {
         <section className="popular-section">
           <div className="section-heading" ref={worksTitleRef}>
             <div>
-              <small>过去 7 天最受欢迎</small>
-              <h2>热门 Whatif</h2>
+              <small>{hasGeneratedStories ? '按故事自动整理' : '过去 7 天最受欢迎'}</small>
+              <h2>{hasGeneratedStories ? '我的已生成故事' : '热门 Whatif'}</h2>
             </div>
             <button type="button" onClick={() => void handleNextBatch()} disabled={batchLoading}>
               {batchLoading ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
@@ -447,14 +446,14 @@ export default function WhatifHome() {
               <WorkCard
                 key={work.id}
                 work={work}
-                onOpen={() => navigate(`/works/${work.workId || work.id}`)}
+                onOpen={() => navigate(work.targetPath || `/works/${work.workId || work.id}`)}
               />
             ))}
           </div>
 
           <div className="feed-footer">
             <Clock3 size={14} />
-            热门内容按近 7 天点赞量排序
+            {hasGeneratedStories ? '同一个故事的多幕视频已自动合在一起' : '热门内容按近 7 天点赞量排序'}
           </div>
         </section>
 
