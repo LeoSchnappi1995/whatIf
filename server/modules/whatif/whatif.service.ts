@@ -28,6 +28,8 @@ import { PROMPT_VERSIONS } from '../../prompts/whatif-prompt-registry';
 import { WhatifAiService } from './whatif-ai.service';
 
 const ASSET_BASE = 'assets/whatif';
+const BUILTIN_CAST_MODEL_CDN_BASE = process.env.WHATIF_BUILTIN_CAST_CDN_BASE
+  || 'https://lf-miaoda-static.feishucdn.com/app_17b2h3329qw/cc71beed83032f9e1d221618a6defaf23cd1e414/client/assets/whatif/generated-cast';
 const MODEL_ASSET_PATHS = {
   officialJiangyu: '/1872109747097770.png',
   officialShenyan: '/1872109769788425.png',
@@ -45,12 +47,12 @@ const WORLDVIEW_MODEL_PATHS: Record<string, string> = {
 };
 
 const BUILTIN_CAST_ASSET_PATHS = {
-  linxia: `${ASSET_BASE}/generated-cast/linxia.png`,
-  sunian: `${ASSET_BASE}/generated-cast/sunian.png`,
-  tangyou: `${ASSET_BASE}/generated-cast/tangyou.png`,
-  guyan: `${ASSET_BASE}/generated-cast/guyan.png`,
-  zhouye: `${ASSET_BASE}/generated-cast/zhouye.png`,
-  luchen: `${ASSET_BASE}/generated-cast/luchen.png`,
+  linxia: `${BUILTIN_CAST_MODEL_CDN_BASE}/linxia.png`,
+  sunian: `${BUILTIN_CAST_MODEL_CDN_BASE}/sunian.png`,
+  tangyou: `${BUILTIN_CAST_MODEL_CDN_BASE}/tangyou.png`,
+  guyan: `${BUILTIN_CAST_MODEL_CDN_BASE}/guyan.png`,
+  zhouye: `${BUILTIN_CAST_MODEL_CDN_BASE}/zhouye.png`,
+  luchen: `${BUILTIN_CAST_MODEL_CDN_BASE}/luchen.png`,
 } as const;
 
 const BUILTIN_CAST_AVATAR_PATHS = {
@@ -674,7 +676,15 @@ export class WhatifService {
   private async bundledModelReference(relativeSource: string) {
     if (!relativeSource.startsWith(`${ASSET_BASE}/`) || relativeSource.includes('..')) return '';
     const cached = this.bundledModelReferenceCache.get(relativeSource);
-    if (cached) return cached;
+    if (cached) {
+      try {
+        return await cached;
+      } catch (error) {
+        this.bundledModelReferenceCache.delete(relativeSource);
+        this.logger.warn(`Unable to reuse bundled model reference ${relativeSource}: ${error instanceof Error ? error.message : error}`);
+        return '';
+      }
+    }
 
     const pending = (async () => {
       const candidates = [
