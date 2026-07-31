@@ -13,6 +13,13 @@ import {
 } from '../../prompts/whatif-prompt-registry';
 
 type CodedError = Error & { code?: string; httpStatus?: number; details?: unknown };
+type ReferenceAssetCategory = 'character_identity' | 'character_body' | 'world_style' | 'generic';
+type SeedanceReferenceAsset = {
+  url: string;
+  token?: string;
+  purpose?: string;
+  category?: ReferenceAssetCategory;
+};
 
 @Injectable()
 export class WhatifAiService {
@@ -666,7 +673,7 @@ export class WhatifAiService {
     prompt: string;
     promptBody?: string;
     referenceImages?: string[];
-    referenceAssets?: Array<{ url: string; token?: string; purpose?: string }>;
+    referenceAssets?: SeedanceReferenceAsset[];
     copyrightSafePrompt?: string;
     traceId?: string;
     taskId?: string;
@@ -682,6 +689,7 @@ export class WhatifAiService {
           url,
           token: `@图片${index + 1}`,
           purpose: `第${index + 1}张参考图`,
+          category: 'generic' as const,
         }));
     const validUrls = new Set(this.validImageUrls(sourceAssets.map((asset) => asset.url), 9));
     const referenceAssets = sourceAssets
@@ -690,6 +698,7 @@ export class WhatifAiService {
         url: String(asset.url).trim(),
         token: String(asset.token || `@图片${index + 1}`),
         purpose: String(asset.purpose || `第${index + 1}张参考图`),
+        category: asset.category || 'generic',
       }));
     const attempts: Array<Record<string, unknown>> = [];
     const endpoint = `${this.seedanceBase}/contents/generations/tasks`;
@@ -795,6 +804,9 @@ export class WhatifAiService {
         role: 'reference_image',
       })),
     ];
+    const worldStyleAssets = (assets: typeof referenceAssets) => assets.filter((asset) => (
+      asset.category === 'world_style' || /世界|场景美术|画风|world style/i.test(asset.purpose)
+    ));
 
     let activeAssets = referenceAssets;
     let content: any[] = contentFor(activeAssets);
@@ -814,7 +826,18 @@ export class WhatifAiService {
     }
     const referenceRetryError = this.taskError(data);
     if (!response.ok && referenceAssets.length && this.shouldRetryWithoutReferences(referenceRetryError || firstError)) {
-      this.logger.warn(`Seedance still rejected reference input; one text-only safety retry is submitted. reason=${referenceRetryError || firstError}`);
+      const retainedStyleAssets = worldStyleAssets(activeAssets);
+      if (retainedStyleAssets.length && retainedStyleAssets.length < activeAssets.length) {
+        this.logger.warn(`Seedance rejected character references; retrying with world-style references preserved. reason=${referenceRetryError || firstError}`);
+        activeAssets = retainedStyleAssets;
+        content = contentFor(activeAssets);
+        inputMode = 'style_reference_fallback';
+        ({ response, data } = await submit(content, inputMode));
+      }
+    }
+    const styleRetryError = this.taskError(data);
+    if (!response.ok && referenceAssets.length && this.shouldRetryWithoutReferences(styleRetryError || referenceRetryError || firstError)) {
+      this.logger.warn(`Seedance rejected all usable reference inputs; one text-only safety retry is submitted. reason=${styleRetryError || referenceRetryError || firstError}`);
       inputMode = 'text_only_safety_fallback';
       ({ response, data } = await submit([
         { type: 'text', text: JSON.stringify({

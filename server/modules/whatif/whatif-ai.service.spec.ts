@@ -172,4 +172,48 @@ describe('WhatifAiService Seedance compiler', () => {
     delete process.env.SEEDANCE_API_KEY;
     delete process.env.SEEDANCE_MODEL;
   });
+
+  it('keeps the world-style reference when multiple character images are rejected', async () => {
+    process.env.SEEDANCE_API_KEY = 'test-key';
+    process.env.SEEDANCE_MODEL = 'test-model';
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: { message: "input image 'content[1]' may contain real person" } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: { message: "input image 'content[1]' may contain real person" } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ id: 'video-task-style-only', status: 'queued' }),
+      } as Response);
+
+    const result = await service.createVideo({
+      prompt: '@图片1 is Lin Xia. @图片2 is Jiang Yu. @图片3 is the locked story world.',
+      promptBody: '@图片1 is Lin Xia. @图片2 is Jiang Yu. @图片3 is the locked story world.',
+      referenceAssets: [
+        { url: 'https://example.com/linxia.png', token: '@图片1', purpose: '林夏的人物身份参考', category: 'character_identity' },
+        { url: 'https://example.com/jiangyu.png', token: '@图片2', purpose: '江屿的人物身份参考', category: 'character_identity' },
+        { url: 'https://example.com/world.png', token: '@图片3', purpose: '现代都市的世界与场景美术参考', category: 'world_style' },
+      ],
+    });
+
+    expect(result.inputMode).toBe('style_reference_fallback');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const styleFallbackBody = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+    expect(styleFallbackBody.content).toHaveLength(2);
+    expect(styleFallbackBody.content[0].text).toContain('@图片1：现代都市的世界与场景美术参考');
+    expect(styleFallbackBody.content[0].text).toContain('@图片1 is the locked story world.');
+    expect(styleFallbackBody.content[1].image_url.url).toBe('https://example.com/world.png');
+
+    fetchMock.mockRestore();
+    delete process.env.SEEDANCE_API_KEY;
+    delete process.env.SEEDANCE_MODEL;
+  });
 });
