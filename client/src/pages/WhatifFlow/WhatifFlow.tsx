@@ -34,6 +34,11 @@ import { resolveAppAssetUrl } from '@/lib/app-base-path';
 import './whatif-flow.css';
 
 type Json = Record<string, any>;
+type CharacterAssetKind = 'identity-face' | 'body-front' | 'body-left' | 'body-right' | 'body-back';
+type CharacterGenerationStage = 'idle' | 'profile' | 'identity' | 'body' | 'optional' | 'confirm';
+
+const characterAssetKinds: CharacterAssetKind[] = ['identity-face', 'body-front', 'body-left', 'body-right', 'body-back'];
+const requiredCharacterAssetKinds: CharacterAssetKind[] = ['identity-face', 'body-front'];
 
 function errorMessage(error: unknown) {
   const candidate = error as { code?: string; response?: { data?: { error?: { code?: string; message?: string; details?: string; path?: string } } }; message?: string };
@@ -46,6 +51,31 @@ function errorMessage(error: unknown) {
 function mediaUrl(url?: string) {
   if (!url) return '';
   return /^(https?:|data:|blob:)/.test(url) ? url : resolveAppAssetUrl(url);
+}
+
+function assetId(asset?: Json) {
+  return String(asset?.assetId || asset?.id || '');
+}
+
+function assetKindLabel(kind: string) {
+  if (kind === 'identity-face') return '身份脸';
+  if (kind === 'body-front') return '正面全身';
+  if (kind === 'body-left') return '左侧全身';
+  if (kind === 'body-right') return '右侧全身';
+  if (kind === 'body-back') return '背面全身';
+  return '人物资产';
+}
+
+function requiredAssetInstruction(kind: CharacterAssetKind, customInstruction = '') {
+  if (customInstruction.trim()) return customInstruction.trim();
+  if (kind === 'identity-face') return '保持人物身份、五官、发型和年龄特征不变，生成自然清晰的正面身份脸。';
+  if (kind === 'body-front') return '严格继承已生成的身份脸，生成从头到脚完整入画的正面全身标准人物资产。';
+  return '保持身份脸、五官、发型、年龄和身材比例不变，补齐这个标准视角。';
+}
+
+function upsertCharacterAsset(assets: Json[], asset: Json, kind: CharacterAssetKind) {
+  const nextAsset = { ...asset, kind: asset.kind || kind };
+  return [nextAsset, ...assets.filter((item) => item.kind !== kind)];
 }
 
 function parseCueRange(value = '') {
@@ -141,7 +171,7 @@ function AssetTile({ asset, selected, confirmed, onClick }: { asset?: Json; sele
   return (
     <button className={`asset-tile ${selected ? 'selected' : ''}`} type="button" onClick={onClick}>
       {asset?.imageUrl ? <img src={mediaUrl(asset.imageUrl)} alt={asset.kind} /> : <span><ImagePlus size={22} /><small>待生成</small></span>}
-      {asset?.imageUrl && <i>{asset.kind === 'identity-face' ? '身份脸' : asset.kind === 'body-front' ? '全身正面' : asset.kind === 'body-left' ? '纯左侧' : asset.kind === 'body-right' ? '纯右侧' : '完整背面'}</i>}
+      {asset?.imageUrl && <i>{assetKindLabel(String(asset.kind || ''))}</i>}
       {confirmed && <b><Check size={12} /></b>}
     </button>
   );
@@ -159,10 +189,11 @@ export function CharacterEditorPage() {
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [assets, setAssets] = useState<Json[]>([]);
   const [confirmed, setConfirmed] = useState<string[]>([]);
-  const [activeKind, setActiveKind] = useState('identity-face');
+  const [activeKind, setActiveKind] = useState<CharacterAssetKind>('identity-face');
   const [instruction, setInstruction] = useState('');
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [generationStage, setGenerationStage] = useState<CharacterGenerationStage>('idle');
 
   useEffect(() => {
     if (!routeCharacterId) return;
@@ -198,49 +229,118 @@ export function CharacterEditorPage() {
     return result.characterId;
   };
 
-  const generate = async () => {
+  const generateAsset = async (
+    id: string,
+    kind: CharacterAssetKind,
+    currentAssets: Json[],
+    options?: { instruction?: string; previousAsset?: string },
+  ) => {
+    const previous = options?.previousAsset ?? currentAssets.find((item) => item.kind === kind)?.imageUrl ?? '';
+    const result = await whatifRequest<Json>('/api/character-assets/tasks', {
+      method: 'POST',
+      data: {
+        characterId: id,
+        kind,
+        instruction: requiredAssetInstruction(kind, options?.instruction ?? ''),
+        referenceImages,
+        previousAsset: previous,
+      },
+    });
+    const nextAssets = upsertCharacterAsset(currentAssets, result, kind);
+    setAssets(nextAssets);
+    setConfirmed((old) => old.filter((confirmedId) => confirmedId !== assetId(currentAssets.find((item) => item.kind === kind))));
+    return { asset: { ...result, kind: result.kind || kind }, assets: nextAssets };
+  };
+
+  const generateRequiredAssets = async (confirmAfter: boolean) => {
+    if (generating || saving) return;
     if (!referenceImages.length) {
-      toast('先上传 1–4 张参考照片', { description: '正脸清晰即可；补充侧面或全身会更稳定' });
+      toast('先上传 1-4 张参考照片', { description: '正脸清晰即可；补充侧面或全身会更稳定' });
       return;
     }
     setGenerating(true);
+    if (confirmAfter) setSaving(true);
     try {
+      setGenerationStage('profile');
       const id = await saveBasic();
-      const previous = assets.find((item) => item.kind === activeKind)?.imageUrl;
-      const result = await whatifRequest<Json>('/api/character-assets/tasks', {
-        method: 'POST',
-        data: { characterId: id, kind: activeKind, instruction, referenceImages, previousAsset: previous },
-      });
-      const generatedAsset = { ...result, kind: result.kind || activeKind };
-      setAssets((old) => [generatedAsset, ...old.filter((item) => item.kind !== activeKind)]);
-      setConfirmed((old) => old.filter((id) => id !== assets.find((item) => item.kind === activeKind)?.assetId));
+      let workingAssets = assets;
+      let identity = workingAssets.find((item) => item.kind === 'identity-face');
+      if (!identity) {
+        setActiveKind('identity-face');
+        setGenerationStage('identity');
+        const generated = await generateAsset(id, 'identity-face', workingAssets);
+        identity = generated.asset;
+        workingAssets = generated.assets;
+      }
+
+      let body = workingAssets.find((item) => item.kind === 'body-front');
+      if (!body) {
+        setActiveKind('body-front');
+        setGenerationStage('body');
+        const generated = await generateAsset(id, 'body-front', workingAssets, { previousAsset: identity?.imageUrl });
+        body = generated.asset;
+        workingAssets = generated.assets;
+      }
+
+      if (confirmAfter) {
+        setGenerationStage('confirm');
+        const requiredIds = requiredCharacterAssetKinds
+          .map((kind) => assetId(workingAssets.find((item) => item.kind === kind)))
+          .filter(Boolean);
+        await whatifRequest(`/api/characters/${id}/confirm-assets`, { method: 'POST', data: { assetIds: requiredIds } });
+        toast.success('人物资产已保存');
+        navigate(returnTo, { replace: true });
+        return;
+      }
+
       setInstruction('');
-      toast.success('这张标准人物图已生成，请查看大图后确认');
+      toast.success('身份脸和正面全身已生成，可以直接确认');
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
       setGenerating(false);
+      setSaving(false);
+      setGenerationStage('idle');
+    }
+  };
+
+  const generate = async () => {
+    if (!referenceImages.length) {
+      toast('先上传 1-4 张参考照片', { description: '正脸清晰即可；补充侧面或全身会更稳定' });
+      return;
+    }
+    const missingRequired = requiredCharacterAssetKinds.some((kind) => !assets.some((item) => item.kind === kind));
+    if (missingRequired) {
+      await generateRequiredAssets(false);
+      return;
+    }
+    setGenerating(true);
+    try {
+      setGenerationStage('optional');
+      const id = await saveBasic();
+      await generateAsset(id, activeKind, assets, { instruction });
+      setInstruction('');
+      toast.success(`${assetKindLabel(activeKind)}已生成`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setGenerating(false);
+      setGenerationStage('idle');
     }
   };
 
   const finish = async () => {
-    const required = assets.filter((item) => ['identity-face', 'body-front'].includes(item.kind));
-    const missingKind = !required.some((item) => item.kind === 'identity-face')
-      ? 'identity-face'
-      : !required.some((item) => item.kind === 'body-front')
-        ? 'body-front'
-        : '';
-    if (missingKind) {
-      setActiveKind(missingKind);
-      toast(missingKind === 'identity-face' ? '还需要先生成身份脸' : '还需要生成正面全身形象');
+    const missingRequired = requiredCharacterAssetKinds.some((kind) => !assets.some((item) => item.kind === kind));
+    if (missingRequired) {
+      await generateRequiredAssets(true);
       return;
     }
-    const assetIds = ['identity-face', 'body-front', 'body-left', 'body-right', 'body-back']
-      .map((kind) => assets.find((item) => item.kind === kind)?.assetId)
-      .map(String)
-      .filter((id) => id && id !== 'undefined');
+    const assetIds = characterAssetKinds
+      .map((kind) => assetId(assets.find((item) => item.kind === kind)))
+      .filter(Boolean);
     setSaving(true);
     try {
+      setGenerationStage('confirm');
       const id = await saveBasic();
       await whatifRequest(`/api/characters/${id}/confirm-assets`, { method: 'POST', data: { assetIds } });
       toast.success('人物资产已保存');
@@ -249,11 +349,30 @@ export function CharacterEditorPage() {
       toast.error(errorMessage(error));
     } finally {
       setSaving(false);
+      setGenerationStage('idle');
     }
   };
 
   const currentAsset = assets.find((item) => item.kind === activeKind);
-  const kinds = ['identity-face', 'body-front', 'body-left', 'body-right', 'body-back'];
+  const missingRequiredCount = requiredCharacterAssetKinds.filter((kind) => !assets.some((item) => item.kind === kind)).length;
+  const stageCopy = generationStage === 'profile' ? '正在创建人物档案'
+    : generationStage === 'identity' ? '正在生成身份脸'
+      : generationStage === 'body' ? '正在生成正面全身'
+        : generationStage === 'confirm' ? '正在保存人物资产'
+          : generationStage === 'optional' ? `正在生成${assetKindLabel(activeKind)}`
+            : '';
+  const generateButtonLabel = generating
+    ? stageCopy || '生成中...'
+    : missingRequiredCount
+      ? 'AI 生成身份脸和全身'
+      : currentAsset
+        ? '按意见重做'
+        : `生成${assetKindLabel(activeKind)}`;
+  const finishLabel = saving || (generating && generationStage === 'confirm')
+    ? '正在保存人物资产'
+    : missingRequiredCount
+      ? '生成并确认人物资产'
+      : '确认身份脸与全身形象';
 
   return (
     <MobilePage
@@ -278,19 +397,19 @@ export function CharacterEditorPage() {
       </section>
 
       <section className="flow-section">
-        <div className="flow-section-title"><div><strong>标准人物资产</strong><small>先确认身份脸与全身正面；侧面、背面可继续补充</small></div></div>
+        <div className="flow-section-title"><div><strong>标准人物资产</strong><small>AI 会自动生成必需的身份脸和正面全身；侧面、背面可继续补充</small></div></div>
         <div className="asset-grid">
-          {kinds.map((kind) => {
+          {characterAssetKinds.map((kind) => {
             const asset = assets.find((item) => item.kind === kind);
-            return <AssetTile key={kind} asset={asset ? { ...asset, imageUrl: asset.imageUrl, kind } : { kind }} selected={activeKind === kind} confirmed={Boolean(asset?.confirmed) || confirmed.includes(asset?.assetId)} onClick={() => setActiveKind(kind)} />;
+            return <AssetTile key={kind} asset={asset ? { ...asset, imageUrl: asset.imageUrl, kind } : { kind }} selected={activeKind === kind} confirmed={Boolean(asset?.confirmed) || confirmed.includes(assetId(asset))} onClick={() => setActiveKind(kind)} />;
           })}
         </div>
-        {generating && <div className="asset-generation-notice"><LoaderCircle className="spin" /><span><strong>正在生成{activeKind === 'identity-face' ? '身份脸' : activeKind === 'body-front' ? '正面全身' : activeKind === 'body-left' ? '左侧全身' : activeKind === 'body-right' ? '右侧全身' : '背面全身'}</strong><small>通常需要 20–60 秒，完成后会自动显示在当前格子</small></span></div>}
+        {generating && <div className="asset-generation-notice"><LoaderCircle className="spin" /><span><strong>{stageCopy}</strong><small>通常需要 20-60 秒；必需资产会按顺序自动生成</small></span></div>}
         {currentAsset?.imageUrl && <div className="asset-confirm-row"><span>满意就直接确认整套人物资产</span><button onClick={() => window.open(currentAsset.imageUrl, '_blank')}>查看大图</button></div>}
-        <div className="point-refine"><input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="可选：脸不变，外套换成米白色；不填则重新生成" /><button disabled={generating} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" /> : <WandSparkles />}{generating ? '生成中…' : currentAsset ? '按意见重做' : 'AI 生成'}</button></div>
+        <div className="point-refine"><input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="可选：脸不变，外套换成米白色；不填则按默认效果生成" /><button disabled={generating || saving} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" /> : <WandSparkles />}{generateButtonLabel}</button></div>
       </section>
 
-      <FixedAction><button className="primary-wide" disabled={saving || generating} onClick={() => void finish()}>{saving ? <LoaderCircle className="spin" /> : <Check />}确认身份脸与全身形象</button></FixedAction>
+      <FixedAction><button className="primary-wide" disabled={saving || generating} onClick={() => void finish()}>{saving || generating ? <LoaderCircle className="spin" /> : <Check />}{finishLabel}</button></FixedAction>
     </MobilePage>
   );
 }

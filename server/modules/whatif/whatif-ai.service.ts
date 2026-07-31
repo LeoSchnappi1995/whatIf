@@ -128,10 +128,12 @@ export class WhatifAiService {
     const httpStatus = Number((error as CodedError)?.httpStatus || 0);
     const details = this.imageErrorDetails(error, 'gateway');
     return (
-      httpStatus === 408
+      httpStatus === 401
+      || httpStatus === 403
+      || httpStatus === 408
       || httpStatus === 429
       || httpStatus >= 500
-      || /UND_ERR|fetch failed|Connect Timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket|network/i.test(
+      || /UND_ERR|fetch failed|Connect Timeout|AccessDenied|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket|network/i.test(
         [details.code, details.causeCode, details.message, details.causeMessage].join(' '),
       )
     );
