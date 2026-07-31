@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
+  Box,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   Clapperboard,
@@ -16,6 +18,7 @@ import {
   RefreshCw,
   Send,
   Share2,
+  Shirt,
   Sparkles,
   UserPlus,
   Users,
@@ -48,6 +51,18 @@ function mediaUrl(url?: string) {
 function parseCueRange(value = '') {
   const values = value.match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
   return { start: values[0] || 0, end: values[1] || values[0] || 15 };
+}
+
+function storyboardPlanToText(plan?: Json | null) {
+  const shots = Array.isArray(plan?.shots) ? plan.shots : [];
+  return shots
+    .map((shot: Json, index: number) => {
+      const time = String(shot.time || `镜头${index + 1}`).replace(/\s+/g, '');
+      const title = String(shot.title || `镜头${index + 1}`).trim();
+      const action = String(shot.action || '').trim();
+      return [`${time}｜${title}`, action].filter(Boolean).join('\n');
+    })
+    .join('\n\n');
 }
 
 function VideoStoryPlayer({ scenes, startIndex = 0 }: { scenes: Json[]; startIndex?: number }) {
@@ -487,7 +502,10 @@ export function SceneEditorPage() {
   const navigate = useNavigate();
   const [context, setContext] = useState<Json | null>(null);
   const [script, setScript] = useState('');
+  const [originalScript, setOriginalScript] = useState('');
+  const [storyboardGenerated, setStoryboardGenerated] = useState(false);
   const [plan, setPlan] = useState<Json | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -495,14 +513,47 @@ export function SceneEditorPage() {
   const [editingTarget, setEditingTarget] = useState('');
   const [refinement, setRefinement] = useState('');
   const previewSequence = useRef(0);
+  const sceneQuery = new URLSearchParams({
+    ...(parentSceneId ? { parentSceneId } : {}),
+    ...(branchId ? { branchId } : {}),
+  }).toString();
+  const sceneReturnPath = `/story-drafts/${draftId}/scene/new${sceneQuery ? `?${sceneQuery}` : ''}`;
+  const storageKey = `whatif-scene-editor:${draftId}:${parentSceneId || 'first'}:${branchId || 'main'}`;
 
   useEffect(() => {
     void whatifRequest<Json>(`/api/story-drafts/${draftId}/scene-editor`, { params: { parentSceneId } }).then((data) => {
       setContext(data);
-      if (data.sceneDraft?.script) setScript(data.sceneDraft.script);
-      if (data.sceneDraft?.directorPlan) setPlan(data.sceneDraft.directorPlan);
+      const saved = window.sessionStorage.getItem(storageKey);
+      if (saved) {
+        try {
+          const localDraft = JSON.parse(saved) as Json;
+          setScript(String(localDraft.script || ''));
+          setOriginalScript(String(localDraft.originalScript || ''));
+          setStoryboardGenerated(Boolean(localDraft.storyboardGenerated));
+          setPlan(localDraft.plan || null);
+          return;
+        } catch {
+          window.sessionStorage.removeItem(storageKey);
+        }
+      }
+      const sceneDraftMatches = String(data.sceneDraft?.parentSceneId || '') === String(parentSceneId || '');
+      const savedPlan = sceneDraftMatches ? data.sceneDraft?.directorPlan || null : null;
+      const savedScript = sceneDraftMatches ? String(data.sceneDraft?.script || '') : '';
+      if (savedPlan) {
+        setOriginalScript(savedScript);
+        setScript(storyboardPlanToText(savedPlan) || savedScript);
+        setStoryboardGenerated(true);
+        setPlan(savedPlan);
+      } else {
+        setScript(savedScript);
+      }
     }).catch((e) => setError(errorMessage(e)));
-  }, [draftId, parentSceneId]);
+  }, [draftId, parentSceneId, storageKey]);
+
+  useEffect(() => {
+    if (!context) return;
+    window.sessionStorage.setItem(storageKey, JSON.stringify({ script, originalScript, storyboardGenerated, plan }));
+  }, [context, originalScript, plan, script, storageKey, storyboardGenerated]);
 
   const runPreview = useCallback(async (nextScript: string, refinements?: Json) => {
     if (nextScript.trim().length < 6) {
@@ -519,7 +570,10 @@ export function SceneEditorPage() {
         timeoutMs: 35_000,
       });
       if (sequence === previewSequence.current) {
-        setPlan(result.directorPlan);
+        const nextPlan = result.directorPlan;
+        setPlan(nextPlan);
+        setScript(storyboardPlanToText(nextPlan) || nextScript);
+        setStoryboardGenerated(true);
         setPreviewError('');
       }
     } catch (error) {
@@ -532,6 +586,22 @@ export function SceneEditorPage() {
       if (sequence === previewSequence.current) setPreviewing(false);
     }
   }, [draftId, parentSceneId]);
+
+  const generateStoryboard = () => {
+    const sourceScript = storyboardGenerated ? originalScript : script;
+    if (!storyboardGenerated) setOriginalScript(script);
+    void runPreview(sourceScript || script);
+  };
+
+  const restoreOriginalScript = () => {
+    previewSequence.current += 1;
+    setPreviewing(false);
+    setPreviewError('');
+    setPlan(null);
+    setScript(originalScript);
+    setOriginalScript('');
+    setStoryboardGenerated(false);
+  };
 
   const generate = async () => {
     if (script.trim().length < 6) {
@@ -546,6 +616,7 @@ export function SceneEditorPage() {
     setSubmitting(true);
     try {
       const result = await whatifRequest<Json>(`/api/story-drafts/${draftId}/scenes/generate`, { method: 'POST', data: { script, ...(plan ? { directorPlan: plan } : {}), parentSceneId, branchId } });
+      window.sessionStorage.removeItem(storageKey);
       navigate(`/video-tasks/${result.taskId}`);
     } catch (error) {
       toast.error(errorMessage(error));
@@ -555,24 +626,38 @@ export function SceneEditorPage() {
   if (error) return <MobilePage title="描述这一幕"><ErrorState message={error} /></MobilePage>;
   if (!context) return <MobilePage title="描述这一幕"><LoadingState /></MobilePage>;
   const capacity = plan?.capacity;
-  return <MobilePage title={parentSceneId ? '续写下一幕' : '描述第一幕'} eyebrow={`${context.story.title} · 15秒一幕`} action={<button onClick={() => navigate(`/story-drafts/${draftId}/advanced`)}><MoreHorizontal /></button>}>
+  const castReturnTo = encodeURIComponent(sceneReturnPath);
+  const scriptLimit = storyboardGenerated ? 800 : 240;
+  const advancedItems = [
+    { label: '人物服装', target: '人物本幕造型', icon: Shirt, value: Object.entries(plan?.visual?.looks || {}).map(([name, look]) => `${name}：${look}`).join('；') },
+    { label: '背景', target: '场景', icon: ImagePlus, value: plan?.visual?.scene },
+    { label: '关键道具', target: '关键道具', icon: Box, value: plan?.visual?.props },
+    { label: '声音', target: '声音', icon: Mic2, value: [plan?.audio?.ambience, plan?.audio?.music].filter(Boolean).join('；') },
+  ];
+  return <MobilePage title={parentSceneId ? '续写下一幕' : '描述第一幕'} eyebrow={`${context.story.title} · 15秒一幕`} action={<button onClick={() => toast('当前内容已自动保留')}><MoreHorizontal /></button>}>
     {context.previous && <section className="previous-summary"><small>前情概要</small><strong>{context.previous.title}</strong><p>{context.previous.summary}</p></section>}
-    <section className="script-card"><div className="script-heading"><span>你想让这一幕发生什么？</span><small>{script.length}/240</small></div><textarea value={script} maxLength={240} onChange={(e) => { previewSequence.current += 1; setPreviewing(false); setPreviewError(''); setPlan(null); setScript(e.target.value); }} placeholder="像给导演说戏一样描述：谁，在什么地方，做了什么，最后发生什么" /><div className="script-tips"><Mic2 size={15} /><span>直接说故事就好；可直接生成视频，也可以先让 AI 补全专业分镜</span></div></section>
-    {capacity?.status === 'overflow' && <div className="capacity-warning"><CircleAlert /><div><strong>这段内容可能放不进 15 秒</strong><p>{capacity.message}</p><button onClick={() => setScript(capacity.suggestedScript)}>使用 AI 精简版</button></div></div>}
-    <section className="ai-board">
-      <div className="ai-board-head"><div><Sparkles /><span><strong>AI 专业分镜 · 可选</strong><small>{previewing ? '正在生成；你仍可以直接生成视频' : plan ? '已生成，可点任何一项局部修改' : previewError ? '本次生成失败，可重试或跳过' : '帮助补全造型、场景、镜头、声音与节奏'}</small></span></div>{previewing && <LoaderCircle className="spin" />}</div>
-      {!plan && <div className={`board-placeholder ${previewError ? 'error' : ''}`}>{previewError ? <CircleAlert /> : <Clapperboard />}<span>{previewing ? 'AI 正在完成专业分镜…' : previewError ? '这次分镜没有生成成功' : '想先看看 AI 会怎么拍？'}</span>{previewError && <p>{previewError}</p>}<button type="button" disabled={previewing || script.trim().length < 6} onClick={() => void runPreview(script)}>{previewing ? <LoaderCircle className="spin" /> : previewError ? <RefreshCw /> : <Sparkles />}{previewing ? '正在生成分镜' : previewError ? '重新生成分镜' : '生成 AI 专业分镜'}</button><small>不生成分镜，也能直接使用上面的剧情制作视频</small></div>}
-      {plan && <>
-        <button className="production-row" onClick={() => setEditingTarget('人物造型')}><span>人物造型</span><p>{Object.entries(plan.visual?.looks || {}).map(([name, look]) => `${name}：${look}`).join('；')}</p><ChevronRight /></button>
-        <button className="production-row" onClick={() => setEditingTarget('场景')}><span>场景</span><p>{plan.visual?.scene}</p><ChevronRight /></button>
-        <button className="production-row" onClick={() => setEditingTarget('关键道具')}><span>关键道具</span><p>{plan.visual?.props}</p><ChevronRight /></button>
-        <button className="production-row" onClick={() => setEditingTarget('声音')}><span>声音</span><p>{plan.audio?.ambience}；{plan.audio?.music}</p><ChevronRight /></button>
-        <div className="shot-strip">{(plan.shots || []).map((shot: Json, index: number) => <button key={index} onClick={() => setEditingTarget(`镜头${index + 1}`)}><i>{shot.time}</i><strong>{shot.title}</strong><p>{shot.action}</p></button>)}</div>
-        <button className="board-regenerate" type="button" disabled={previewing} onClick={() => void runPreview(script)}><WandSparkles />重新生成整套分镜</button>
-      </>}
+    <section className="scene-cast-card">
+      <div className="scene-cast-heading"><span><strong>本幕人物</strong><small>决定这一幕谁会出镜</small></span><button type="button" onClick={() => navigate(`/story-drafts/${draftId}/cast?returnTo=${castReturnTo}`)}>调整</button></div>
+      <div className="scene-cast-list">
+        {(context.characters || []).map((character: Json) => <div className="scene-cast-person" key={character.characterId || character.id}><img src={mediaUrl(character.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{character.name}</strong><small><LockKeyhole />已锁定形象</small></span></div>)}
+        <button className="scene-cast-add" type="button" onClick={() => navigate(`/story-drafts/${draftId}/cast?returnTo=${castReturnTo}`)}><Plus /><span>添加人物</span></button>
+      </div>
     </section>
-    {editingTarget && <div className="refine-drawer"><div><strong>只修改：{editingTarget}</strong><button onClick={() => setEditingTarget('')}>×</button></div><textarea value={refinement} onChange={(e) => setRefinement(e.target.value)} placeholder={`例如：${editingTarget}里只改哪一点，其他保持不变`} /><button onClick={() => { void runPreview(script, { target: editingTarget, instruction: refinement, approvedPlan: plan }); setEditingTarget(''); setRefinement(''); }}><WandSparkles />让 AI 局部调整</button></div>}
-    <FixedAction><div className="price-hint"><span>{plan ? '使用当前专业分镜生成 15 秒成片' : '直接使用剧情描述生成 15 秒成片'}</span><strong>15 Soul币</strong></div><button className="primary-wide" disabled={script.trim().length < 6 || submitting || capacity?.status === 'overflow'} onClick={() => void generate()}>{submitting ? <LoaderCircle className="spin" /> : <Film />}{submitting ? '正在提交…' : '生成视频'}</button></FixedAction>
+    <section className={`script-card ${storyboardGenerated ? 'storyboard-mode' : ''}`}>
+      <div className="script-heading"><span>{storyboardGenerated ? '15秒分镜（可直接修改）' : '你想让这一幕发生什么？'}</span><small>{storyboardGenerated && 'AI 已生成 · '}{script.length}/{scriptLimit}</small></div>
+      <textarea value={script} maxLength={scriptLimit} onChange={(e) => { previewSequence.current += 1; setPreviewing(false); setPreviewError(''); if (storyboardGenerated) setPlan(null); setScript(e.target.value); }} placeholder="像给导演说戏一样描述：谁，在什么地方，做了什么，最后发生什么" />
+      <div className="script-actions">
+        <span>{previewing ? <><LoaderCircle className="spin" />AI 正在补全专业分镜…</> : previewError ? <><CircleAlert />{previewError}</> : storyboardGenerated ? <><Sparkles />AI 已补全分镜，可直接修改</> : <><Mic2 />直接描述故事，也可以让 AI 补全分镜</>}</span>
+        <div>{storyboardGenerated && <button type="button" disabled={previewing} onClick={restoreOriginalScript}>撤回原描述</button>}<button className="ai-storyboard-action" type="button" disabled={previewing || script.trim().length < 6} onClick={generateStoryboard}>{previewing ? <LoaderCircle className="spin" /> : storyboardGenerated || previewError ? <RefreshCw /> : <Sparkles />}{previewing ? '生成中' : storyboardGenerated || previewError ? '重新生成' : '生成 AI 分镜'}</button></div>
+      </div>
+    </section>
+    {capacity?.status === 'overflow' && <div className="capacity-warning"><CircleAlert /><div><strong>这段内容可能放不进 15 秒</strong><p>{capacity.message}</p><button onClick={() => { setScript(capacity.suggestedScript); setOriginalScript(''); setStoryboardGenerated(false); setPlan(null); }}>使用 AI 精简版</button></div></div>}
+    <section className={`scene-advanced ${advancedOpen ? 'open' : ''}`}>
+      <button className="scene-advanced-toggle" type="button" onClick={() => setAdvancedOpen(!advancedOpen)}><span><strong>高级设置（可选）</strong><small>调整服装、背景、道具与声音</small></span><ChevronDown /></button>
+      {advancedOpen && <div className="scene-advanced-content">{advancedItems.map(({ label, target, icon: Icon, value }) => <button type="button" key={target} onClick={() => setEditingTarget(target)}><Icon /><span><strong>{label}</strong><small>{value || 'AI 将根据人物、世界观和当前剧情自动完成'}</small></span><ChevronRight /></button>)}</div>}
+    </section>
+    {editingTarget && <div className="refine-drawer"><div><strong>只修改：{editingTarget}</strong><button onClick={() => setEditingTarget('')}>×</button></div><textarea value={refinement} onChange={(e) => setRefinement(e.target.value)} placeholder={`告诉 AI ${editingTarget}具体要怎么调整；未点名的内容保持不变`} /><button disabled={previewing || !refinement.trim()} onClick={() => { if (!storyboardGenerated) setOriginalScript(script); void runPreview(plan ? originalScript || script : script, { target: editingTarget, instruction: refinement, approvedPlan: plan }); setEditingTarget(''); setRefinement(''); }}><WandSparkles />只调整这一项</button></div>}
+    <FixedAction><div className="price-hint"><span>{storyboardGenerated ? '将按当前分镜生成约 15 秒成片' : '将按当前剧情描述生成约 15 秒成片'}</span><strong>15 Soul币</strong></div><button className="primary-wide" disabled={script.trim().length < 6 || submitting || capacity?.status === 'overflow'} onClick={() => void generate()}>{submitting ? <LoaderCircle className="spin" /> : <Film />}{submitting ? '正在提交…' : '生成视频'}</button></FixedAction>
   </MobilePage>;
 }
 

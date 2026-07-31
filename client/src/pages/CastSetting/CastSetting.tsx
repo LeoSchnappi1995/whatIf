@@ -10,7 +10,7 @@ import {
   RotateCcw,
   UserPlus,
 } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { getCastSetting, updateCastSetting } from '@/api';
@@ -137,6 +137,9 @@ function WorldviewCard({
 export default function CastSetting() {
   const { draftId = 'draft_demo' } = useParams();
   const navigate = useNavigate();
+  const [search] = useSearchParams();
+  const returnTo = search.get('returnTo') || '';
+  const castPagePath = `/story-drafts/${draftId}/cast${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`;
   const [data, setData] = useState<CastSettingResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [worldviewId, setWorldviewId] = useState<string | null>(null);
@@ -308,7 +311,7 @@ export default function CastSetting() {
       toast.success('人物与世界观已确认', {
         description: '下一步将描述这段 15 秒故事',
       });
-      navigate(`/story-drafts/${draftId}/scene/new`);
+      navigate(returnTo || `/story-drafts/${draftId}/scene/new`);
     }
   };
 
@@ -336,7 +339,7 @@ export default function CastSetting() {
     <main className="cast-page">
       <div className="cast-shell">
         <header className="cast-header">
-          <button type="button" onClick={() => navigate(-1)} aria-label="返回">
+          <button type="button" onClick={() => returnTo ? navigate(returnTo) : navigate(-1)} aria-label="返回">
             <ChevronLeft size={24} />
           </button>
             <strong>选择人物与世界</strong>
@@ -385,7 +388,7 @@ export default function CastSetting() {
             <div className="cast-add-actions">
               <button
                 type="button"
-                onClick={() => navigate(`/characters/new?returnTo=${encodeURIComponent(`/story-drafts/${draftId}/cast`)}`)}
+                onClick={() => navigate(`/characters/new?returnTo=${encodeURIComponent(castPagePath)}`)}
               >
                 <Plus size={17} />
                 创建角色
@@ -422,11 +425,11 @@ export default function CastSetting() {
                 />
               ))}
             </div>
-            <button className="cast-create-world" type="button" onClick={() => navigate(`/worldviews/new?returnTo=${encodeURIComponent(`/story-drafts/${draftId}/cast`)}`)}>
+            <button className="cast-create-world" type="button" onClick={() => navigate(`/worldviews/new?returnTo=${encodeURIComponent(castPagePath)}`)}>
               <Plus size={15} />
               新建世界观
             </button>
-            {worldviewId && <button className="cast-create-world secondary" type="button" onClick={() => navigate(`/worldviews/${worldviewId}?returnTo=${encodeURIComponent(`/story-drafts/${draftId}/cast`)}`)}>编辑所选世界观</button>}
+            {worldviewId && <button className="cast-create-world secondary" type="button" onClick={() => navigate(`/worldviews/${worldviewId}?returnTo=${encodeURIComponent(castPagePath)}`)}>编辑所选世界观</button>}
           </section>
         </div>
 
