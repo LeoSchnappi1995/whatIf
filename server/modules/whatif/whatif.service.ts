@@ -418,7 +418,7 @@ export class WhatifService {
         summary: `${row.isSelf ? '故事里的我 · ' : ''}${row.description.slice(0, 18) || '我的角色'}`,
         description: row.description,
         sourceType: row.sourceType,
-        badges: row.isSelf ? ['我'] : ['我的'],
+        badges: row.isSelf ? ['我'] : row.sourceType === 'seedance_asset' ? ['Seedance角色资产'] : ['我的'],
         selectable: row.status === 'active' && Boolean(row.masterAssetId),
         unavailableReason: row.status === 'active' && row.masterAssetId ? '' : '需先确认身份脸与全身形象',
         authorizationStatus: 'not_required',
@@ -528,10 +528,11 @@ export class WhatifService {
     const name = String(body.name || '').trim();
     if (!name) this.fail('CHARACTER_NAME_REQUIRED', '请输入角色名称');
     const id = String(body.characterId || this.id('character'));
+    const sourceType = body.sourceType === 'seedance_asset' ? 'seedance_asset' : 'custom';
     if (body.isSelf) await this.db.update(whatifCharacters).set({ isSelf: false, updatedAt: new Date() }).where(and(eq(whatifCharacters.ownerId, ownerId), eq(whatifCharacters.isSelf, true)));
     const [existing] = await this.db.select().from(whatifCharacters).where(and(eq(whatifCharacters.id, id), eq(whatifCharacters.ownerId, ownerId))).limit(1);
     if (existing) await this.db.update(whatifCharacters).set({ name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', currentVersion: existing.currentVersion + 1, updatedAt: new Date() }).where(eq(whatifCharacters.id, id));
-    else await this.db.insert(whatifCharacters).values({ id, ownerId, name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', sourceType: 'custom', status: 'draft' });
+    else await this.db.insert(whatifCharacters).values({ id, ownerId, name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', sourceType, status: 'draft' });
     return { characterId: id, traceId: this.traceId() };
   }
 

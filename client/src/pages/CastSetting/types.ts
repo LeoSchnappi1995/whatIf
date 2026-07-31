@@ -1,4 +1,4 @@
-export type CharacterSourceType = 'self' | 'custom' | 'friend' | 'official';
+export type CharacterSourceType = 'self' | 'custom' | 'seedance_asset' | 'friend' | 'official';
 
 export interface CastCharacter {
   characterId: string;
