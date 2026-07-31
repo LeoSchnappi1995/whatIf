@@ -719,9 +719,9 @@ export class WhatifService {
   }
 
   private async referenceAssetsFromSnapshots(characters: AnyRecord[], worldview: AnyRecord) {
-    const selected: Array<{ source: unknown; purpose: string }> = [];
-    const add = (source: unknown, purpose: string) => {
-      if (source) selected.push({ source, purpose });
+    const selected: Array<{ source: unknown; purpose: string; category: 'character_identity' | 'character_body' | 'world_style' }> = [];
+    const add = (source: unknown, purpose: string, category: 'character_identity' | 'character_body' | 'world_style') => {
+      if (source) selected.push({ source, purpose, category });
     };
 
     // Identity images are the highest priority for multi-character face consistency.
@@ -729,25 +729,29 @@ export class WhatifService {
       add(
         character.assetViews?.identityFace || character.avatarUrl,
         `${String(character.name || '该角色')}的人物身份参考，只锁定该角色的脸、发型、年龄与辨识特征`,
+        'character_identity',
       );
     }
     // Keep the story world available before optional body references consume the 9-image allowance.
     add(
       worldview?.coverUrl,
       `${String(worldview?.name || '本故事')}的世界与场景美术参考，只锁定时代、环境、材质、色彩与光线`,
+      'world_style',
     );
     for (const character of characters) {
       add(
         character.assetViews?.bodyFront,
         `${String(character.name || '该角色')}的全身造型参考，只锁定身材比例、基础服装与整体轮廓`,
+        'character_body',
       );
     }
 
     const resolved = await Promise.all(selected.map(async (item) => ({
       url: await this.modelReference(item.source),
       purpose: item.purpose,
+      category: item.category,
     })));
-    const deduplicated = new Map<string, { url: string; purpose: string }>();
+    const deduplicated = new Map<string, { url: string; purpose: string; category: 'character_identity' | 'character_body' | 'world_style' }>();
     for (const item of resolved) {
       if (!item.url) continue;
       const existing = deduplicated.get(item.url);
@@ -795,7 +799,7 @@ export class WhatifService {
       directorPlan,
       previous,
       userScript: script,
-      referenceAssets: referenceAssets.map(({ token, role, purpose }) => ({ token, role, purpose })),
+      referenceAssets: referenceAssets.map(({ token, role, purpose, category }) => ({ token, role, purpose, category })),
     };
     const compilation = await this.ai.compileSeedance(compilationInput);
     const requestedBranchId = body.branchId ? String(body.branchId) : undefined;
@@ -805,6 +809,13 @@ export class WhatifService {
     const sceneId = this.id('scene');
     const taskId = this.id('video_task');
     const referenceImages = referenceAssets.map((asset) => asset.url);
+    const worldviewStyleLock = [
+      context.worldview?.name,
+      context.worldview?.stylePrompt,
+      context.worldview?.atmosphere,
+      context.worldview?.description,
+    ].filter(Boolean).join('；');
+    const styleLockPrompt = `STORY STYLE LOCK — preserve the same visual medium, production design, color palette, lighting logic, material texture and camera finish across every scene in this story. Never switch between live action, anime, 3D, illustration or stylized animation. Locked worldview: ${worldviewStyleLock || 'inherit the approved story worldview exactly'}.`;
     const baseRequestSnapshot = {
       httpRequest: { draftId, body },
       resolvedInput: {
@@ -839,11 +850,11 @@ export class WhatifService {
     });
     try {
       const created = await this.ai.createVideo({
-        prompt: `${compilation.prompt}\nNegative constraints: ${compilation.negativePrompt}`,
-        promptBody: `${compilation.promptBody}\nNegative constraints: ${compilation.negativePrompt}`,
+        prompt: `${compilation.prompt}\n${styleLockPrompt}\nNegative constraints: ${compilation.negativePrompt}`,
+        promptBody: `${compilation.promptBody}\n${styleLockPrompt}\nNegative constraints: ${compilation.negativePrompt}`,
         referenceImages,
         referenceAssets,
-        copyrightSafePrompt: `${compilation.textOnlyPrompt}\nNegative constraints: ${compilation.negativePrompt}\nAll people are original fictional adults. Use stylized cinematic animation if any identity reference is unsafe.`,
+        copyrightSafePrompt: `${compilation.textOnlyPrompt}\n${styleLockPrompt}\nNegative constraints: ${compilation.negativePrompt}\nAll people are original fictional adults. If identity references are unavailable, preserve the locked worldview and exact visual medium from text; do not change the story into animation, 3D, illustration or another style.`,
         traceId,
         taskId,
         sceneId,
