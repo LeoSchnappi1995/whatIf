@@ -45,6 +45,37 @@ describe('WhatifAiService', () => {
 });
 
 describe('WhatifAiService Seedance compiler', () => {
+  it('builds a direct user-script plan without calling the text model', () => {
+    const service = new WhatifAiService();
+    const plan = service.buildDirectScene({
+      script: '林夏在雨夜认出顾言，顾言把保存多年的信递给她。',
+      story: { setting: '当代上海的Soul线下活动' },
+      characters: [{ name: '林夏', description: '黑色长发，温柔坚定' }, { name: '顾言', description: '黑色短发，温和可靠' }],
+    });
+
+    expect(plan.summary).toContain('顾言把保存多年的信递给她');
+    expect(plan.shots).toHaveLength(3);
+    expect(plan.promptVersion).toBe('story-direct-v1');
+  });
+
+  it('compiles a direct Seedance prompt from user script without the text model', () => {
+    const service = new WhatifAiService();
+    const result = service.compileSeedanceDirect({
+      userScript: '林夏在雨夜认出顾言，顾言把保存多年的信递给她。',
+      story: { title: '雨夜重逢', setting: '当代上海' },
+      characters: [{ name: '林夏', description: '黑色长发' }, { name: '顾言', description: '黑色短发' }],
+      directorPlan: service.buildDirectScene({ script: '林夏在雨夜认出顾言，顾言把保存多年的信递给她。' }),
+      referenceAssets: [
+        { token: '@图片1', role: 'reference_image', purpose: '林夏的人物身份参考' },
+        { token: '@图片2', role: 'reference_image', purpose: '顾言的人物身份参考' },
+      ],
+    });
+
+    expect(result.prompt).toContain('@图片1：林夏的人物身份参考');
+    expect(result.prompt).toContain('顾言把保存多年的信递给她');
+    expect(result.promptVersion).toBe('seedance-direct-v1');
+  });
+
   it('binds numbered reference assets into both compiler input and final Seedance prompt', async () => {
     const service = new WhatifAiService();
     const textJson = jest.spyOn(service as any, 'textJson').mockResolvedValue({

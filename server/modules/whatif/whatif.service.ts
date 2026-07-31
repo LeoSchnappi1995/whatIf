@@ -768,17 +768,22 @@ export class WhatifService {
       request: body,
     }));
     const previous = await this.previousScene(ownerId, body.parentSceneId ? String(body.parentSceneId) : undefined);
-    const directorPlan = body.directorPlan && Array.isArray(body.directorPlan.shots) ? body.directorPlan : await this.ai.directScene({ script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous });
+    const hasProfessionalPlan = Boolean(body.directorPlan && Array.isArray(body.directorPlan.shots));
+    const directionInput = { script, story: { title: context.draft.title, setting: context.draft.setting, relationship: context.draft.relationship, worldview: context.worldview }, characters: context.casts, previous };
+    const directorPlan = hasProfessionalPlan ? body.directorPlan : this.ai.buildDirectScene(directionInput);
     if (directorPlan.capacity?.status === 'overflow' && body.force !== true) this.fail('SCENE_CAPACITY_OVERFLOW', directorPlan.capacity.message || '这一幕超过 15 秒，请缩短或拆成两幕', 422, { suggestedScript: directorPlan.capacity.suggestedScript });
     const referenceAssets = await this.referenceAssetsFromSnapshots(context.casts, context.worldview);
-    const compilation = await this.ai.compileSeedance({
+    const compilationInput = {
       story: { title: context.draft.title, setting: context.draft.setting, worldview: context.worldview },
       characters: context.casts,
       directorPlan,
       previous,
       userScript: script,
       referenceAssets: referenceAssets.map(({ token, role, purpose }) => ({ token, role, purpose })),
-    });
+    };
+    const compilation = hasProfessionalPlan
+      ? await this.ai.compileSeedance(compilationInput)
+      : this.ai.compileSeedanceDirect(compilationInput);
     const requestedBranchId = body.branchId ? String(body.branchId) : undefined;
     const { story, branch } = await this.ensureStory(ownerId, draftId, requestedBranchId);
     const scenes = await this.db.select().from(whatifScenes).where(and(eq(whatifScenes.storyId, story.id), eq(whatifScenes.branchId, branch.id)));
@@ -799,6 +804,7 @@ export class WhatifService {
         characters: context.casts,
         previous,
         directorPlan,
+        directionMode: hasProfessionalPlan ? 'professional_storyboard' : 'direct_user_script',
       },
       compilation,
       referenceAssets,
