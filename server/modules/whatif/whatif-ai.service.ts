@@ -23,6 +23,17 @@ type SeedanceReferenceAsset = {
   category?: ReferenceAssetCategory;
 };
 
+function characterVoiceLock(character: Record<string, any>) {
+  const voice = character.voiceProfile && typeof character.voiceProfile === 'object'
+    ? character.voiceProfile as Record<string, unknown>
+    : {};
+  const name = String(character.name || '该角色');
+  const voiceName = String(voice.voiceName || '').trim();
+  const promptVoiceLock = String(voice.promptVoiceLock || voice.voiceDesc || '').trim();
+  if (!voiceName && !promptVoiceLock) return `${name}：继承该角色稳定声线；没有明确对白时不强加对白`;
+  return `${name}：${[voiceName, promptVoiceLock].filter(Boolean).join('；')}；跨幕保持同一声线，不随机换音色`;
+}
+
 @Injectable()
 export class WhatifAiService {
   private readonly logger = new Logger(WhatifAiService.name);
@@ -236,7 +247,7 @@ export class WhatifAiService {
         continuity: '锁定已选人物身份、世界观、角色数量和用户明确事件，全程保持一致。',
       },
       audio: {
-        voiceCasting: Object.fromEntries(names.map((name) => [name, '继承该角色稳定声线；没有明确对白时不强加对白'])),
+        voiceCasting: Object.fromEntries(characters.map((character) => [String(character.name || '角色'), characterVoiceLock(character)])),
         ambience: '与主场景一致的连续环境音',
         music: '低音量电影配乐，只服务情绪转折，不盖过动作和对白',
         mix: '对白和关键动作优先，环境音其次，音乐最低',
@@ -286,6 +297,7 @@ export class WhatifAiService {
     const directorPlan = (input.directorPlan && typeof input.directorPlan === 'object' ? input.directorPlan : {}) as Record<string, any>;
     const shots = (Array.isArray(directorPlan.shots) ? directorPlan.shots : []) as Array<Record<string, any>>;
     const characterText = characters.map((item) => `${item.name || 'Character'}: ${item.description || 'preserve the approved identity'}`).join('; ');
+    const voiceLocks = characters.map(characterVoiceLock).join('\n');
     const timeline = shots.map((shot, index) => {
       const visible = Array.isArray(shot.visibleCharacters) ? shot.visibleCharacters.map(String).filter(Boolean) : [];
       const screenOnly = Array.isArray(shot.screenOnlyCharacters) ? shot.screenOnlyCharacters.map(String).filter(Boolean) : [];
@@ -310,6 +322,7 @@ export class WhatifAiService {
       `User story intent — follow this literally and do not add another event: ${script}`,
       `Story and world context: ${JSON.stringify(story)}`,
       `Characters: ${characterText || 'Use only the characters explicitly present in the user story.'}`,
+      `Character voice locks:\n${voiceLocks || 'Use stable natural Mandarin voices and do not change a character voice across scenes.'}`,
       `Reference bindings: ${referenceBindings}`,
       `15-second timeline:\n${timeline}`,
       'Keep one location and one causally connected event. Every action must visibly continue from the previous state; avoid montage, slideshow pacing, static posing, excessive slow motion, or trailer-like fragments.',

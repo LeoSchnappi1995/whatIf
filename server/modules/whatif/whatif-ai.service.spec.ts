@@ -177,7 +177,10 @@ describe('WhatifAiService Seedance compiler', () => {
     const result = service.compileSeedanceDirect({
       userScript: '林夏在雨夜认出顾言，顾言把保存多年的信递给她。',
       story: { title: '雨夜重逢', setting: '当代上海' },
-      characters: [{ name: '林夏', description: '黑色长发' }, { name: '顾言', description: '黑色短发' }],
+      characters: [
+        { name: '林夏', description: '黑色长发', voiceProfile: { voiceName: '温柔清亮女声', promptVoiceLock: 'young warm clear female voice' } },
+        { name: '顾言', description: '黑色短发', voiceProfile: { voiceName: '沉稳低音男声', promptVoiceLock: 'steady low male voice' } },
+      ],
       directorPlan: service.buildDirectScene({ script: '林夏在雨夜认出顾言，顾言把保存多年的信递给她。' }),
       referenceAssets: [
         { token: '@图片1', role: 'reference_image', purpose: '林夏的人物身份参考' },
@@ -187,6 +190,8 @@ describe('WhatifAiService Seedance compiler', () => {
 
     expect(result.prompt).toContain('@图片1：林夏的人物身份参考');
     expect(result.prompt).toContain('顾言把保存多年的信递给她');
+    expect(result.promptBody).toContain('林夏：温柔清亮女声；young warm clear female voice');
+    expect(result.promptBody).toContain('顾言：沉稳低音男声；steady low male voice');
     expect(result.promptVersion).toBe('seedance-direct-v3');
   });
 
