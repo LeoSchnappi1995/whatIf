@@ -202,6 +202,10 @@
   background: #fff;
   color: #333a3b;
 }
+.flow-fixed-action > .secondary-wide + .primary-wide,
+.flow-fixed-action > .primary-wide + .secondary-wide {
+  margin-top: 8px;
+}
 .text-danger {
   display: block;
   width: 100%;
