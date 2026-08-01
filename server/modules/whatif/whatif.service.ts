@@ -354,6 +354,7 @@ export class WhatifService implements OnModuleInit {
   async getHome(ownerId: string) {
     let statusCard: AnyRecord | null = null;
     try {
+      await this.ensureVoiceProfileColumn();
       const [invitation] = await this.db.select().from(whatifInvitations)
         .where(and(eq(whatifInvitations.inviteeId, ownerId), eq(whatifInvitations.status, 'pending')))
         .orderBy(desc(whatifInvitations.updatedAt)).limit(1);
@@ -738,6 +739,7 @@ export class WhatifService implements OnModuleInit {
   }
 
   async generateCharacterAsset(ownerId: string, body: AnyRecord) {
+    await this.ensureVoiceProfileColumn();
     const characterId = String(body.characterId || '');
     const [character] = await this.db.select().from(whatifCharacters).where(and(eq(whatifCharacters.id, characterId), eq(whatifCharacters.ownerId, ownerId))).limit(1);
     if (!character) throw new NotFoundException({ code: 'CHARACTER_NOT_FOUND', message: '请先保存角色名称和描写' });
@@ -750,6 +752,7 @@ export class WhatifService implements OnModuleInit {
   }
 
   async confirmCharacterAssets(ownerId: string, characterId: string, body: AnyRecord) {
+    await this.ensureVoiceProfileColumn();
     const assetIds = Array.from(new Set((Array.isArray(body.assetIds) ? body.assetIds : []).map(String)));
     if (!assetIds.length) this.fail('CHARACTER_ASSET_REQUIRED', '请确认身份脸和至少一张全身形象');
     const assets = await this.db.select().from(whatifCharacterAssets).where(and(eq(whatifCharacterAssets.ownerId, ownerId), eq(whatifCharacterAssets.characterId, characterId), inArray(whatifCharacterAssets.id, assetIds)));
@@ -1430,6 +1433,7 @@ export class WhatifService implements OnModuleInit {
   }
 
   async authorizeInvitation(ownerId: string, invitationId: string, body: AnyRecord) {
+    await this.ensureVoiceProfileColumn();
     const [invitation] = await this.db.select().from(whatifInvitations).where(eq(whatifInvitations.id, invitationId)).limit(1);
     if (!invitation || invitation.status !== 'accepted') this.fail('INVITATION_NOT_ACCEPTABLE', '邀请状态已变化，请重新打开');
     if (body.authorizationChecked !== true) this.fail('AUTHORIZATION_CONFIRM_REQUIRED', '请确认本次角色授权范围');
