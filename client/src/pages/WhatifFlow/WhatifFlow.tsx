@@ -829,7 +829,6 @@ export function SceneEditorPage() {
   if (!context) return <MobilePage title="描述这一幕"><LoadingState /></MobilePage>;
   const capacity = plan?.capacity;
   const castReturnTo = encodeURIComponent(sceneReturnPath);
-  const scriptLimit = storyboardGenerated ? 800 : 240;
   const advancedItems = [
     { label: '人物服装', target: '人物本幕造型', icon: Shirt, value: Object.entries(plan?.visual?.looks || {}).map(([name, look]) => `${name}：${look}`).join('；') },
     { label: '背景', target: '场景', icon: ImagePlus, value: plan?.visual?.scene },
@@ -851,8 +850,8 @@ export function SceneEditorPage() {
       </div>
     </section>
     <section className={`script-card ${storyboardGenerated ? 'storyboard-mode' : ''}`}>
-      <div className="script-heading"><span>{storyboardGenerated ? '15秒分镜（可直接修改）' : '你想让这一幕发生什么？'}</span><small>{storyboardGenerated && 'AI 已生成 · '}{script.length}/{scriptLimit}</small></div>
-      <textarea value={script} maxLength={scriptLimit} onChange={(e) => { previewSequence.current += 1; setPreviewing(false); setPreviewError(''); if (storyboardGenerated) setPlan(null); setScript(e.target.value); }} placeholder="像给导演说戏一样描述：谁，在什么地方，做了什么，最后发生什么" />
+      <div className="script-heading"><span>{storyboardGenerated ? '15秒分镜（可直接修改）' : '你想让这一幕发生什么？'}</span><small>{storyboardGenerated && 'AI 已生成 · '}已输入 {script.length} 字</small></div>
+      <textarea value={script} onChange={(e) => { previewSequence.current += 1; setPreviewing(false); setPreviewError(''); if (storyboardGenerated) setPlan(null); setScript(e.target.value); }} placeholder="像给导演说戏一样描述：谁，在什么地方，做了什么，最后发生什么" />
       <div className="script-actions">
         <span>{previewing ? <><LoaderCircle className="spin" />AI 正在补全专业分镜…</> : previewError ? <><CircleAlert />{previewError}</> : storyboardGenerated ? <><Sparkles />AI 已补全分镜，可直接修改</> : <><Mic2 />直接描述故事，也可以让 AI 补全分镜</>}</span>
         <div>{storyboardGenerated && <button type="button" disabled={previewing} onClick={restoreOriginalScript}>撤回原描述</button>}<button className="ai-storyboard-action" type="button" disabled={previewing || script.trim().length < 6} onClick={generateStoryboard}>{previewing ? <LoaderCircle className="spin" /> : storyboardGenerated || previewError ? <RefreshCw /> : <Sparkles />}{previewing ? '生成中' : storyboardGenerated || previewError ? '重新生成' : '生成 AI 分镜'}</button></div>
