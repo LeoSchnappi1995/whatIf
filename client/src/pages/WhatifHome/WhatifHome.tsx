@@ -257,6 +257,7 @@ export default function WhatifHome() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const worksTitleRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   const previewState = useMemo(() => {
     const value = new URLSearchParams(window.location.search).get('previewState');
@@ -328,7 +329,7 @@ export default function WhatifHome() {
     void handleCreate();
   };
 
-  const handleNextBatch = async () => {
+  const handleNextBatch = useCallback(async () => {
     if (!data || batchLoading) return;
     if (!data.nextCursor) {
       toast(data.works.some((work) => work.sourceType === 'generated_story') ? '已展示全部已生成故事' : '已经看完本轮热门作品');
@@ -355,7 +356,18 @@ export default function WhatifHome() {
     } finally {
       setBatchLoading(false);
     }
-  };
+  }, [batchLoading, data]);
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !data?.hasMore || loading || batchLoading) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void handleNextBatch();
+    }, { rootMargin: '240px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [batchLoading, data?.hasMore, handleNextBatch, loading]);
+
   const hasGeneratedStories = data?.works.some((work) => work.sourceType === 'generated_story') ?? false;
   const generatedStoryCount = data?.works.filter((work) => work.sourceType === 'generated_story').length ?? 0;
 
@@ -464,6 +476,7 @@ export default function WhatifHome() {
                 ? '热门内容按近 7 天点赞量排序'
                 : '已展示全部热门内容'}
           </div>
+          <div ref={loadMoreRef} aria-hidden="true" />
         </section>
 
         <footer className="home-footer">
