@@ -7,7 +7,6 @@ import {
   LoaderCircle,
   Play,
   Plus,
-  RefreshCw,
   RotateCcw,
   Sparkles,
   UsersRound,
@@ -450,10 +449,6 @@ export default function WhatifHome() {
               <small>{hasGeneratedStories ? '按故事自动整理' : '过去 7 天最受欢迎'}</small>
               <h2>{hasGeneratedStories ? '我的已生成故事' : '热门 Whatif'}</h2>
             </div>
-            <button type="button" onClick={() => void handleNextBatch()} disabled={batchLoading || !data.hasMore}>
-              {batchLoading ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
-              {data.hasMore ? '加载更多' : '已全部展示'}
-            </button>
           </div>
 
           <div className="works-grid">
@@ -467,8 +462,10 @@ export default function WhatifHome() {
           </div>
 
           <div className="feed-footer">
-            <Clock3 size={14} />
-            {hasGeneratedStories
+            {batchLoading ? <LoaderCircle className="spin" size={14} /> : <Clock3 size={14} />}
+            {batchLoading
+              ? '正在自动加载更多'
+              : hasGeneratedStories
               ? data.hasMore
                 ? `已展示 ${generatedStoryCount} 个已生成故事，继续加载可查看后续内容`
                 : `已展示全部 ${generatedStoryCount} 个已生成故事`
