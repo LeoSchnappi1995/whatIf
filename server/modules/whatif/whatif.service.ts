@@ -4,7 +4,7 @@ import {
   FileService,
   type PostgresJsDatabase,
 } from '@lark-apaas/fullstack-nestjs-core';
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import * as ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
@@ -1474,12 +1474,24 @@ export class WhatifService {
     const sceneIds = Array.isArray(publication.sceneIds) ? publication.sceneIds.map(String) : [];
     const scenes = sceneIds.length ? await this.db.select().from(whatifScenes).where(inArray(whatifScenes.id, sceneIds)) : [];
     const tasks = sceneIds.length ? await this.db.select().from(whatifVideoTasks).where(and(inArray(whatifVideoTasks.sceneId, sceneIds), eq(whatifVideoTasks.status, 'success'))).orderBy(desc(whatifVideoTasks.createdAt)) : [];
+    const orderedTasks = sceneIds.map((sceneId) => tasks.find((item) => item.sceneId === sceneId)).filter((task): task is typeof tasks[number] => Boolean(task));
+    let publicationVideoPath = publication.videoPath || '';
+    if (!publicationVideoPath && sceneIds.length > 1 && orderedTasks.length === sceneIds.length && orderedTasks.every((task) => task.videoPath)) {
+      try {
+        publicationVideoPath = await this.composePublicationVideo(orderedTasks, publication.id);
+        if (publicationVideoPath) {
+          await this.db.update(whatifPublications).set({ videoPath: publicationVideoPath, remixTemplate: { ...(publication.remixTemplate as AnyRecord), composeStatus: 'success_backfilled' }, updatedAt: new Date() }).where(eq(whatifPublications.id, publication.id));
+        }
+      } catch (error) {
+        this.logger.warn(`publication video backfill failed: ${error instanceof Error ? error.message : error}`);
+      }
+    }
     const orderedScenes = await Promise.all(sceneIds.map(async (sceneId) => {
       const scene = scenes.find((item) => item.id === sceneId);
       const task = tasks.find((item) => item.sceneId === sceneId);
       return scene && task ? { sceneId, title: scene.title, summary: (scene.directorPlan as AnyRecord)?.summary || scene.userScript, durationSeconds: task.durationSeconds, videoUrl: await this.signed(task.videoPath), directorPlan: scene.directorPlan } : null;
     }));
-    return { workId: publication.id, title: publication.title, subtitle: publication.summary, summary: publication.summary, coverUrl: await this.signed(publication.coverPath), videoUrl: await this.signed(publication.videoPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: publication.likeCount, durationSeconds: orderedScenes.filter(Boolean).reduce((total, scene) => total + Number(scene?.durationSeconds || 15), 0), canRemix: publication.canRemix, scenes: orderedScenes.filter(Boolean), traceId: this.traceId() };
+    return { workId: publication.id, title: publication.title, subtitle: publication.summary, summary: publication.summary, coverUrl: await this.signed(publication.coverPath), videoUrl: await this.signed(publicationVideoPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: publication.likeCount, durationSeconds: orderedScenes.filter(Boolean).reduce((total, scene) => total + Number(scene?.durationSeconds || 15), 0), canRemix: publication.canRemix, scenes: orderedScenes.filter(Boolean), traceId: this.traceId() };
   }
 
   friendCandidates() {
