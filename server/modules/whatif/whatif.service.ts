@@ -1259,7 +1259,19 @@ export class WhatifService {
     const stories = await this.db.select().from(whatifStories).where(eq(whatifStories.ownerId, ownerId)).orderBy(desc(whatifStories.updatedAt));
     const items = await Promise.all(stories.map(async (story) => {
       const scenes = await this.db.select().from(whatifScenes).where(eq(whatifScenes.storyId, story.id)).orderBy(whatifScenes.sequence);
-      return { storyId: story.id, title: story.title, setting: story.setting, coverUrl: await this.signed(story.coverPath), status: story.status, sceneCount: scenes.length, completedSceneCount: scenes.filter((scene) => scene.status === 'success').length, latestScene: scenes.at(-1) || null, updatedAt: story.updatedAt };
+      const tasks = scenes.length ? await this.db.select().from(whatifVideoTasks)
+        .where(and(eq(whatifVideoTasks.ownerId, ownerId), inArray(whatifVideoTasks.sceneId, scenes.map((scene) => scene.id)), eq(whatifVideoTasks.status, 'success')))
+        .orderBy(whatifVideoTasks.createdAt) : [];
+      const firstCompletedScene = scenes.find((scene) => scene.status === 'success' && tasks.some((task) => task.sceneId === scene.id));
+      const firstTask = firstCompletedScene
+        ? tasks.find((task) => task.id === firstCompletedScene.selectedResultId) || tasks.find((task) => task.sceneId === firstCompletedScene.id)
+        : tasks[0];
+      const media = this.ai.videoMedia(firstTask?.responseSnapshot);
+      const videoFrameCover = await this.signed(firstTask?.posterPath)
+        || await this.signed(firstTask?.lastFramePath)
+        || media.firstFrameUrl
+        || media.lastFrameUrl;
+      return { storyId: story.id, title: story.title, setting: story.setting, coverUrl: videoFrameCover || await this.signed(story.coverPath), status: story.status, sceneCount: scenes.length, completedSceneCount: scenes.filter((scene) => scene.status === 'success').length, latestScene: scenes.at(-1) || null, updatedAt: story.updatedAt };
     }));
     return { items, traceId: this.traceId() };
   }
