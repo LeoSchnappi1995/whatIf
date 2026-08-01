@@ -1031,8 +1031,11 @@ export function WorkDetailPage() {
   useEffect(() => { void whatifRequest<Json>(`/api/works/${workId}`).then(setData).catch((loadError) => setError(errorMessage(loadError))); }, [workId]);
   if (error) return <MobilePage title="故事成片"><ErrorState message={error} /></MobilePage>;
   if (!data) return <MobilePage title="故事成片"><LoadingState /></MobilePage>;
+  const playbackScenes = data.videoUrl
+    ? [{ sceneId: `${data.workId}-full`, title: data.title, summary: data.summary || data.subtitle, durationSeconds: data.durationSeconds, videoUrl: data.videoUrl, coverUrl: data.coverUrl }]
+    : data.scenes;
   return <MobilePage title={data.title} eyebrow={`${data.scenes.length} 幕 · ${data.durationSeconds}s`} action={<button onClick={async () => { if (navigator.share) { await navigator.share({ title: data.title, text: data.summary, url: window.location.href }).catch(() => undefined); } else { await navigator.clipboard.writeText(window.location.href); toast.success('链接已复制'); } }}><Share2 /></button>}>
-    <VideoStoryPlayer scenes={data.scenes} />
+    <VideoStoryPlayer scenes={playbackScenes} />
     <section className="result-copy"><span>完整故事</span><h1>{data.title}</h1><p>{data.summary || data.subtitle}</p></section>
     <section className="work-author"><img src={mediaUrl(data.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{data.authorName}</strong><small>{data.likeCount || 0} 人喜欢这个故事</small></span></section>
     <FixedAction><button className="primary-wide" disabled={!data.canRemix || creating} onClick={async () => { setCreating(true); try { const draft = await whatifRequest<Json>('/api/story-drafts', { method: 'POST', data: { mode: 'remix', sourceWorkId: workId, idempotencyKey: crypto.randomUUID() } }); navigate(`/story-drafts/${draft.draftId}/cast`); } catch (createError) { toast.error(errorMessage(createError)); } finally { setCreating(false); } }}>{creating ? <LoaderCircle className="spin" /> : <Sparkles />}{data.canRemix ? '创作我的版本' : '作者未开放同款'}</button></FixedAction>

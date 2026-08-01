@@ -5,9 +5,12 @@ import {
   type PostgresJsDatabase,
 } from '@lark-apaas/fullstack-nestjs-core';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
-import { readFile } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import ffmpegPath from 'ffmpeg-static';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
 
 import {
   whatifAuthorizationSnapshots,
@@ -314,6 +317,66 @@ export class WhatifService {
       const warning = error instanceof Error ? error.message : `${label}归档失败`;
       this.logger.warn(`${label} archive fallback: ${warning}`);
       return { path: '', warning };
+    }
+  }
+
+  private runFfmpeg(args: string[], timeoutMs = 180_000) {
+    if (!ffmpegPath) return Promise.reject(new Error('ffmpeg binary is not available for this runtime'));
+    return new Promise<void>((resolveRun, rejectRun) => {
+      const child = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const stderr: Buffer[] = [];
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        rejectRun(new Error('ffmpeg compose timed out'));
+      }, timeoutMs);
+      child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        rejectRun(error);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolveRun();
+        else rejectRun(new Error(`ffmpeg exited ${code}: ${Buffer.concat(stderr).toString('utf8').slice(-2000)}`));
+      });
+    });
+  }
+
+  private async downloadVideoToFile(videoPath: string, targetPath: string) {
+    const url = await this.signed(videoPath);
+    if (!url) throw new Error('video path is empty');
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`video download failed: ${response.status}`);
+    await writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
+  }
+
+  private async composePublicationVideo(tasks: Array<{ videoPath?: string | null }>, publicationId: string) {
+    if (!tasks.length || tasks.some((task) => !task.videoPath)) return '';
+    if (tasks.length === 1) return tasks[0].videoPath || '';
+    const dir = await mkdtemp(join(tmpdir(), 'whatif-compose-'));
+    try {
+      const inputPaths: string[] = [];
+      for (const [index, task] of tasks.entries()) {
+        const inputPath = join(dir, `scene-${index + 1}.mp4`);
+        await this.downloadVideoToFile(String(task.videoPath), inputPath);
+        inputPaths.push(inputPath);
+      }
+      const concatListPath = join(dir, 'concat.txt');
+      await writeFile(concatListPath, inputPaths.map((path) => `file '${path.replace(/'/g, "'\\''")}'`).join('\n'));
+      const outputPath = join(dir, 'story.mp4');
+      try {
+        await this.runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-c', 'copy', '-movflags', '+faststart', outputPath]);
+      } catch (copyError) {
+        this.logger.warn(`publication video stream-copy compose failed, retrying with transcode: ${copyError instanceof Error ? copyError.message : copyError}`);
+        await this.runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outputPath], 300_000);
+      }
+      const uploaded = await this.files.upload(await readFile(outputPath), {
+        fileName: `${publicationId}-story.mp4`,
+        contentType: 'video/mp4',
+      });
+      return uploaded.filePath;
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   }
 
@@ -1383,10 +1446,20 @@ export class WhatifService {
     const validSelectedIds = selected.map((scene) => scene.id);
     const copy = await this.ai.publicationCopy({ story: timeline.story, scenes: selected.map((scene) => ({ title: scene.title, summary: (scene.directorPlan as AnyRecord)?.summary })) });
     const latestTask = await this.db.select().from(whatifVideoTasks).where(inArray(whatifVideoTasks.sceneId, selected.map((scene) => scene.id))).orderBy(desc(whatifVideoTasks.createdAt));
-    const successfulTasks = selected.map((scene) => latestTask.find((task) => task.sceneId === scene.id && task.status === 'success')).filter(Boolean);
+    const successfulTasks = selected
+      .map((scene) => latestTask.find((task) => task.sceneId === scene.id && task.status === 'success'))
+      .filter((task): task is typeof latestTask[number] => Boolean(task));
+    if (successfulTasks.length !== selected.length || successfulTasks.some((task) => !task.videoPath)) this.fail('PUBLICATION_VIDEO_REQUIRED', '选中的幕缺少已完成视频，请刷新后重试');
     const firstTask = successfulTasks[0];
     const publicationId = this.id('publication');
-    await this.db.insert(whatifPublications).values({ id: publicationId, storyId, ownerId, sceneIds: validSelectedIds, title: String(body.title || copy.title), summary: String(body.summary || copy.summary), coverPath: firstTask?.posterPath || firstTask?.lastFramePath || timeline.story.coverPath, videoPath: selected.length === 1 ? firstTask?.videoPath : null, status: body.publish === true ? 'published' : 'draft', visibility: body.visibility === 'private' ? 'private' : 'public', canRemix: body.canRemix !== false, remixTemplate: { storyTitle: timeline.story.title, setting: timeline.story.setting, sceneClues: selected.map((scene) => scene.userScript) } });
+    let publicationVideoPath = '';
+    try {
+      publicationVideoPath = await this.composePublicationVideo(successfulTasks, publicationId);
+    } catch (error) {
+      this.logger.warn(`publication video compose failed: ${error instanceof Error ? error.message : error}`);
+      publicationVideoPath = selected.length === 1 ? firstTask.videoPath || '' : '';
+    }
+    await this.db.insert(whatifPublications).values({ id: publicationId, storyId, ownerId, sceneIds: validSelectedIds, title: String(body.title || copy.title), summary: String(body.summary || copy.summary), coverPath: firstTask?.posterPath || firstTask?.lastFramePath || timeline.story.coverPath, videoPath: publicationVideoPath || null, status: body.publish === true ? 'published' : 'draft', visibility: body.visibility === 'private' ? 'private' : 'public', canRemix: body.canRemix !== false, remixTemplate: { storyTitle: timeline.story.title, setting: timeline.story.setting, sceneClues: selected.map((scene) => scene.userScript), composeStatus: publicationVideoPath ? 'success' : 'fallback_split' } });
     return { publicationId, workPath: `/works/${publicationId}`, title: body.title || copy.title, summary: body.summary || copy.summary, tags: copy.tags, status: body.publish === true ? 'published' : 'draft', traceId: this.traceId() };
   }
 
@@ -1405,7 +1478,7 @@ export class WhatifService {
       const task = tasks.find((item) => item.sceneId === sceneId);
       return scene && task ? { sceneId, title: scene.title, summary: (scene.directorPlan as AnyRecord)?.summary || scene.userScript, durationSeconds: task.durationSeconds, videoUrl: await this.signed(task.videoPath), directorPlan: scene.directorPlan } : null;
     }));
-    return { workId: publication.id, title: publication.title, subtitle: publication.summary, summary: publication.summary, coverUrl: await this.signed(publication.coverPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: publication.likeCount, durationSeconds: orderedScenes.filter(Boolean).reduce((total, scene) => total + Number(scene?.durationSeconds || 15), 0), canRemix: publication.canRemix, scenes: orderedScenes.filter(Boolean), traceId: this.traceId() };
+    return { workId: publication.id, title: publication.title, subtitle: publication.summary, summary: publication.summary, coverUrl: await this.signed(publication.coverPath), videoUrl: await this.signed(publication.videoPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: publication.likeCount, durationSeconds: orderedScenes.filter(Boolean).reduce((total, scene) => total + Number(scene?.durationSeconds || 15), 0), canRemix: publication.canRemix, scenes: orderedScenes.filter(Boolean), traceId: this.traceId() };
   }
 
   friendCandidates() {
