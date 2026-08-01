@@ -4,8 +4,8 @@ import {
   FileService,
   type PostgresJsDatabase,
 } from '@lark-apaas/fullstack-nestjs-core';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
-import ffmpegPath from 'ffmpeg-static';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -32,6 +32,7 @@ import { WhatifAiService } from './whatif-ai.service';
 import { findWhatifVoicePreset, WHATIF_VOICE_PRESETS, type WhatifVoiceProfile } from '../../../shared/whatif-voices';
 
 const ASSET_BASE = 'assets/whatif';
+const FFMPEG_PATH = ffmpegInstaller.path;
 const BUILTIN_CAST_MODEL_CDN_BASE = process.env.WHATIF_BUILTIN_CAST_CDN_BASE
   || 'https://lf-miaoda-static.feishucdn.com/app_17b2h3329qw/cc71beed83032f9e1d221618a6defaf23cd1e414/client/assets/whatif/generated-cast';
 const MODEL_ASSET_PATHS = {
@@ -321,9 +322,9 @@ export class WhatifService {
   }
 
   private runFfmpeg(args: string[], timeoutMs = 180_000) {
-    if (!ffmpegPath) return Promise.reject(new Error('ffmpeg binary is not available for this runtime'));
+    if (!FFMPEG_PATH) return Promise.reject(new Error('ffmpeg binary is not available for this runtime'));
     return new Promise<void>((resolveRun, rejectRun) => {
-      const child = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       const stderr: Buffer[] = [];
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
