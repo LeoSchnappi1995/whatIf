@@ -331,7 +331,7 @@ export default function WhatifHome() {
   const handleNextBatch = async () => {
     if (!data || batchLoading) return;
     if (!data.nextCursor) {
-      toast('已经看完本轮热门作品');
+      toast(data.works.some((work) => work.sourceType === 'generated_story') ? '已展示全部已生成故事' : '已经看完本轮热门作品');
       return;
     }
     setBatchLoading(true);
@@ -341,20 +341,23 @@ export default function WhatifHome() {
         current
           ? {
               ...current,
-              works: response.works,
+              works: [
+                ...current.works,
+                ...response.works.filter((work) => !current.works.some((item) => item.id === work.id)),
+              ],
               nextCursor: response.nextCursor,
               hasMore: response.hasMore,
             }
           : current,
       );
-      worksTitleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (worksError) {
-      toast.error(getErrorMessage(worksError) ?? '换一批失败，请重试');
+      toast.error(getErrorMessage(worksError) ?? '加载更多失败，请重试');
     } finally {
       setBatchLoading(false);
     }
   };
   const hasGeneratedStories = data?.works.some((work) => work.sourceType === 'generated_story') ?? false;
+  const generatedStoryCount = data?.works.filter((work) => work.sourceType === 'generated_story').length ?? 0;
 
   if (loading) return <HomeSkeleton />;
 
@@ -435,9 +438,9 @@ export default function WhatifHome() {
               <small>{hasGeneratedStories ? '按故事自动整理' : '过去 7 天最受欢迎'}</small>
               <h2>{hasGeneratedStories ? '我的已生成故事' : '热门 Whatif'}</h2>
             </div>
-            <button type="button" onClick={() => void handleNextBatch()} disabled={batchLoading}>
+            <button type="button" onClick={() => void handleNextBatch()} disabled={batchLoading || !data.hasMore}>
               {batchLoading ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
-              换一批
+              {data.hasMore ? '加载更多' : '已全部展示'}
             </button>
           </div>
 
@@ -453,7 +456,13 @@ export default function WhatifHome() {
 
           <div className="feed-footer">
             <Clock3 size={14} />
-            {hasGeneratedStories ? '同一个故事的多幕视频已自动合在一起' : '热门内容按近 7 天点赞量排序'}
+            {hasGeneratedStories
+              ? data.hasMore
+                ? `已展示 ${generatedStoryCount} 个已生成故事，继续加载可查看后续内容`
+                : `已展示全部 ${generatedStoryCount} 个已生成故事`
+              : data.hasMore
+                ? '热门内容按近 7 天点赞量排序'
+                : '已展示全部热门内容'}
           </div>
         </section>
 
