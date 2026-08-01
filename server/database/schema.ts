@@ -82,7 +82,6 @@ export const whatifCharacters = pgTable('whatif_characters', {
   currentVersion: integer('current_version').default(1).notNull(),
   masterAssetId: varchar('master_asset_id', { length: 80 }),
   avatarPath: text('avatar_path'),
-  voiceProfile: jsonb('voice_profile').default(sql`'{}'::jsonb`).notNull(),
   visibility: varchar({ length: 16 }).default('private').notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
