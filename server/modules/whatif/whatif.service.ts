@@ -1,10 +1,10 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import {
   DRIZZLE_DATABASE,
   FileService,
   type PostgresJsDatabase,
 } from '@lark-apaas/fullstack-nestjs-core';
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -26,6 +26,7 @@ import {
 } from '../../database/schema';
 import { PROMPT_VERSIONS } from '../../prompts/whatif-prompt-registry';
 import { WhatifAiService } from './whatif-ai.service';
+import { findWhatifVoicePreset, WHATIF_VOICE_PRESETS, type WhatifVoiceProfile } from '../../../shared/whatif-voices';
 
 const ASSET_BASE = 'assets/whatif';
 const BUILTIN_CAST_MODEL_CDN_BASE = process.env.WHATIF_BUILTIN_CAST_CDN_BASE
@@ -203,9 +204,10 @@ const fallbackWorks = [
 type AnyRecord = Record<string, any>;
 
 @Injectable()
-export class WhatifService {
+export class WhatifService implements OnModuleInit {
   private readonly logger = new Logger(WhatifService.name);
   private readonly bundledModelReferenceCache = new Map<string, Promise<string>>();
+  private voiceProfileColumnReady: Promise<void> | null = null;
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
@@ -221,12 +223,48 @@ export class WhatifService {
     return randomUUID();
   }
 
+  async onModuleInit() {
+    try {
+      await this.ensureVoiceProfileColumn();
+    } catch (error) {
+      this.logger.warn(`Unable to prepare character voice column: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
   private fail(code: string, message: string, status = 400, details?: unknown): never {
     throw new BadRequestException({ code, message, httpStatus: status, details });
   }
 
   private isMissingTable(error: unknown) {
     return String((error as { code?: unknown })?.code || '') === '42P01';
+  }
+
+  private ensureVoiceProfileColumn() {
+    if (!this.voiceProfileColumnReady) {
+      this.voiceProfileColumnReady = this.db.execute(sql`ALTER TABLE whatif_characters ADD COLUMN IF NOT EXISTS voice_profile jsonb NOT NULL DEFAULT '{}'::jsonb`)
+        .then(() => undefined)
+        .catch((error) => {
+          this.voiceProfileColumnReady = null;
+          throw error;
+        });
+    }
+    return this.voiceProfileColumnReady;
+  }
+
+  private defaultVoiceIdForCharacter(input: { name?: unknown; description?: unknown }) {
+    const text = `${String(input.name || '')} ${String(input.description || '')}`;
+    if (/男|少年|先生|哥哥|弟弟|男声|短发|低沉|成熟|克制|沉稳/.test(text)) {
+      return /少年|青春|明亮|热烈|冲劲|弟弟/.test(text) ? 'whatif_bright_young_male' : 'whatif_steady_low_male';
+    }
+    if (/旁白|叙述|神秘|命运|系统|时间/.test(text)) return 'whatif_cinematic_narrator';
+    if (/活泼|元气|轻快|直率|明亮|主动/.test(text)) return 'whatif_lively_female';
+    if (/冷静|理性|成熟|克制|清醒|低柔/.test(text)) return 'whatif_calm_low_female';
+    return 'whatif_warm_clear_female';
+  }
+
+  private normalizeVoiceProfile(value: unknown, fallbackInput: { name?: unknown; description?: unknown } = {}): WhatifVoiceProfile {
+    const raw = value && typeof value === 'object' ? value as Partial<WhatifVoiceProfile> : {};
+    return findWhatifVoicePreset(raw.voiceId || this.defaultVoiceIdForCharacter(fallbackInput));
   }
 
   private async signed(path?: string | null) {
@@ -506,6 +544,7 @@ export class WhatifService {
   }
 
   private async userCharacterCandidates(ownerId: string) {
+    await this.ensureVoiceProfileColumn();
     const rows = await this.db.select().from(whatifCharacters)
       .where(and(eq(whatifCharacters.ownerId, ownerId), ne(whatifCharacters.status, 'deleted')))
       .orderBy(desc(whatifCharacters.isSelf), desc(whatifCharacters.updatedAt));
@@ -533,6 +572,7 @@ export class WhatifService {
         avatarUrl: await this.signed(row.avatarPath),
         summary: `${row.isSelf ? '故事里的我 · ' : ''}${row.description.slice(0, 18) || '我的角色'}`,
         description: row.description,
+        voiceProfile: this.normalizeVoiceProfile(row.voiceProfile, row),
         sourceType: row.sourceType,
         badges: row.isSelf ? ['我'] : row.sourceType === 'seedance_asset' ? ['Seedance角色资产'] : ['我的'],
         selectable: row.status === 'active' && Boolean(row.masterAssetId),
@@ -568,10 +608,12 @@ export class WhatifService {
     });
     const libraryCharacters = await Promise.all(officialCharacters.map(async (item) => {
       const master = latestLibraryMaster.get(item.characterId);
-      if (!master?.imagePath || master.promptVersion !== PROMPT_VERSIONS.seedanceCharacterMaster) return item;
+      const voiceProfile = this.normalizeVoiceProfile(null, item);
+      if (!master?.imagePath || master.promptVersion !== PROMPT_VERSIONS.seedanceCharacterMaster) return { ...item, voiceProfile };
       const masterUrl = await this.signed(master.imagePath);
       return {
         ...item,
+        voiceProfile,
         avatarUrl: masterUrl,
         badges: Array.from(new Set([...item.badges, 'Seedance角色资产'])),
         assetViews: {
@@ -670,22 +712,25 @@ export class WhatifService {
   }
 
   async createCharacter(ownerId: string, body: AnyRecord) {
+    await this.ensureVoiceProfileColumn();
     const name = String(body.name || '').trim();
     if (!name) this.fail('CHARACTER_NAME_REQUIRED', '请输入角色名称');
     const id = String(body.characterId || this.id('character'));
     const sourceType = body.sourceType === 'seedance_asset' ? 'seedance_asset' : 'custom';
+    const voiceProfile = this.normalizeVoiceProfile(body.voiceProfile, { name, description: body.description });
     if (body.isSelf) await this.db.update(whatifCharacters).set({ isSelf: false, updatedAt: new Date() }).where(and(eq(whatifCharacters.ownerId, ownerId), eq(whatifCharacters.isSelf, true)));
     const [existing] = await this.db.select().from(whatifCharacters).where(and(eq(whatifCharacters.id, id), eq(whatifCharacters.ownerId, ownerId))).limit(1);
-    if (existing) await this.db.update(whatifCharacters).set({ name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', currentVersion: existing.currentVersion + 1, updatedAt: new Date() }).where(eq(whatifCharacters.id, id));
-    else await this.db.insert(whatifCharacters).values({ id, ownerId, name, description: String(body.description || '').slice(0, 500), isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', sourceType, status: 'draft' });
+    if (existing) await this.db.update(whatifCharacters).set({ name, description: String(body.description || '').slice(0, 500), voiceProfile, isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', currentVersion: existing.currentVersion + 1, updatedAt: new Date() }).where(eq(whatifCharacters.id, id));
+    else await this.db.insert(whatifCharacters).values({ id, ownerId, name, description: String(body.description || '').slice(0, 500), voiceProfile, isSelf: Boolean(body.isSelf), visibility: body.visibility === 'public' ? 'public' : 'private', sourceType, status: 'draft' });
     return { characterId: id, traceId: this.traceId() };
   }
 
   async getCharacter(ownerId: string, characterId: string) {
+    await this.ensureVoiceProfileColumn();
     const [character] = await this.db.select().from(whatifCharacters).where(and(eq(whatifCharacters.id, characterId), eq(whatifCharacters.ownerId, ownerId))).limit(1);
     if (!character) throw new NotFoundException({ code: 'CHARACTER_NOT_FOUND', message: '角色不存在' });
     const assets = await this.db.select().from(whatifCharacterAssets).where(and(eq(whatifCharacterAssets.characterId, characterId), eq(whatifCharacterAssets.ownerId, ownerId))).orderBy(desc(whatifCharacterAssets.createdAt));
-    return { ...character, avatarUrl: await this.signed(character.avatarPath), assets: await Promise.all(assets.map(async (asset) => ({ ...asset, assetId: asset.id, imageUrl: await this.signed(asset.imagePath) }))), traceId: this.traceId() };
+    return { ...character, voiceProfile: this.normalizeVoiceProfile(character.voiceProfile, character), voiceOptions: WHATIF_VOICE_PRESETS, avatarUrl: await this.signed(character.avatarPath), assets: await Promise.all(assets.map(async (asset) => ({ ...asset, assetId: asset.id, imageUrl: await this.signed(asset.imagePath) }))), traceId: this.traceId() };
   }
 
   async listCharacters(ownerId: string) {

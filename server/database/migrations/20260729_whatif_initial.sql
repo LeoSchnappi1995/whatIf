@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS whatif_characters (
   current_version integer NOT NULL DEFAULT 1,
   master_asset_id varchar(80),
   avatar_path text,
+  voice_profile jsonb NOT NULL DEFAULT '{}'::jsonb,
   visibility varchar(16) NOT NULL DEFAULT 'private',
   created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP

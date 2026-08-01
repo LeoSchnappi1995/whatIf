@@ -24,12 +24,13 @@ import {
   Users,
   WandSparkles,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { uploadWhatifImage, whatifRequest } from '@/api';
 import { resolveAppAssetUrl } from '@/lib/app-base-path';
+import { findWhatifVoicePreset, WHATIF_VOICE_PRESETS, type WhatifVoiceProfile } from '@shared/whatif-voices';
 
 import './whatif-flow.css';
 
@@ -76,6 +77,38 @@ function requiredAssetInstruction(kind: CharacterAssetKind, customInstruction = 
 function upsertCharacterAsset(assets: Json[], asset: Json, kind: CharacterAssetKind) {
   const nextAsset = { ...asset, kind: asset.kind || kind };
   return [nextAsset, ...assets.filter((item) => item.kind !== kind)];
+}
+
+function VoiceOptionCard({
+  voice,
+  selected,
+  playing,
+  onSelect,
+  onPreview,
+}: {
+  voice: WhatifVoiceProfile;
+  selected: boolean;
+  playing: boolean;
+  onSelect: () => void;
+  onPreview: () => void;
+}) {
+  return (
+    <button
+      className={`voice-option ${selected ? 'selected' : ''}`}
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+    >
+      <span className="voice-play" onClick={(event) => { event.stopPropagation(); onPreview(); }}>
+        {playing ? <Pause /> : <Play fill="currentColor" />}
+      </span>
+      <span>
+        <strong>{voice.voiceName}</strong>
+        <small>{voice.voiceDesc}</small>
+      </span>
+      <i>{selected && <Check />}</i>
+    </button>
+  );
 }
 
 function parseCueRange(value = '') {
@@ -186,6 +219,8 @@ export function CharacterEditorPage() {
   const [name, setName] = useState('林夏');
   const [description, setDescription] = useState('25岁，黑色长发，温柔坚定，对未知世界充满好奇。');
   const [isSelf, setIsSelf] = useState(true);
+  const [voiceProfile, setVoiceProfile] = useState<WhatifVoiceProfile>(() => findWhatifVoicePreset());
+  const [playingVoiceId, setPlayingVoiceId] = useState('');
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [assets, setAssets] = useState<Json[]>([]);
   const [confirmed, setConfirmed] = useState<string[]>([]);
@@ -201,10 +236,39 @@ export function CharacterEditorPage() {
       setName(data.name || '');
       setDescription(data.description || '');
       setIsSelf(Boolean(data.isSelf));
+      setVoiceProfile(findWhatifVoicePreset(data.voiceProfile?.voiceId));
       setAssets(data.assets || []);
       setConfirmed((data.assets || []).filter((item: Json) => item.confirmed).map((item: Json) => item.id));
     }).catch((error) => toast.error(errorMessage(error)));
   }, [routeCharacterId]);
+
+  useEffect(() => () => {
+    window.speechSynthesis?.cancel();
+  }, []);
+
+  const previewVoice = (voice: WhatifVoiceProfile) => {
+    if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+      toast('当前浏览器暂不支持试听');
+      return;
+    }
+    if (playingVoiceId === voice.voiceId) {
+      window.speechSynthesis.cancel();
+      setPlayingVoiceId('');
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(voice.previewText);
+    utterance.lang = voice.preview.lang;
+    utterance.rate = voice.preview.rate;
+    utterance.pitch = voice.preview.pitch;
+    const voices = window.speechSynthesis.getVoices();
+    const matchedVoice = voices.find((item) => item.lang.toLowerCase().startsWith('zh'));
+    if (matchedVoice) utterance.voice = matchedVoice;
+    utterance.onend = () => setPlayingVoiceId('');
+    utterance.onerror = () => setPlayingVoiceId('');
+    setPlayingVoiceId(voice.voiceId);
+    window.speechSynthesis.speak(utterance);
+  };
 
   const upload = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -220,7 +284,7 @@ export function CharacterEditorPage() {
   const saveBasic = async () => {
     const result = await whatifRequest<{ characterId: string }>('/api/characters', {
       method: 'POST',
-      data: { characterId: characterId || undefined, name, description, isSelf, visibility: 'private' },
+      data: { characterId: characterId || undefined, name, description, voiceProfile, isSelf, visibility: 'private' },
     });
     if (!characterId) {
       setCharacterId(result.characterId);
@@ -387,6 +451,22 @@ export function CharacterEditorPage() {
         <button className={`self-toggle ${isSelf ? 'active' : ''}`} type="button" onClick={() => setIsSelf(!isSelf)}><i>{isSelf && <Check size={12} />}</i><span><strong>设为故事里的我</strong><small>一个账号只能有一个“我”，历史故事不受影响</small></span></button>
       </section>
 
+      <section className="flow-section character-voice-section">
+        <div className="flow-section-title"><div><strong>角色声音</strong><small>选择后会作为这个人物的固定声线，后续每一幕自动继承</small></div></div>
+        <div className="voice-option-list">
+          {WHATIF_VOICE_PRESETS.map((voice) => (
+            <VoiceOptionCard
+              key={voice.voiceId}
+              voice={voice}
+              selected={voiceProfile.voiceId === voice.voiceId}
+              playing={playingVoiceId === voice.voiceId}
+              onSelect={() => setVoiceProfile(voice)}
+              onPreview={() => previewVoice(voice)}
+            />
+          ))}
+        </div>
+      </section>
+
       <section className="flow-section">
         <div className="flow-section-title"><div><strong>上传参考照片</strong><small>支持多张，AI 自动提炼稳定身份</small></div><span>{referenceImages.length}/4</span></div>
         <div className="reference-strip">
@@ -431,7 +511,7 @@ export function CharacterListPage() {
       <div><small>SEEDANCE READY</small><strong>一键生成人物资产</strong><p>上传照片，AI 自动生成身份脸和正面全身，完成后直接加入人物列表。</p></div>
       <button type="button" onClick={() => navigate('/characters/seedance/new')}>开始生成<ChevronRight /></button>
     </section>
-    {data && <div className="record-list">{data.items.length ? data.items.map((item: Json) => <button className="record-card character-record" key={item.characterId} onClick={() => navigate(`/characters/${item.characterId}`)}><img src={mediaUrl(item.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{item.name}</strong><small>{item.summary}</small><span className="character-record-meta">{item.sourceType === 'seedance_asset' && <em>Seedance角色资产</em>}<i>{item.selectable ? '可用于生成' : item.unavailableReason}</i></span></span><ChevronRight /></button>) : <div className="empty-card"><Users /><strong>还没有角色</strong><p>创建“故事里的我”或新的虚构角色</p></div>}</div>}
+    {data && <div className="record-list">{data.items.length ? data.items.map((item: Json) => <button className="record-card character-record" key={item.characterId} onClick={() => navigate(`/characters/${item.characterId}`)}><img src={mediaUrl(item.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{item.name}</strong><small>{item.summary}</small><span className="character-record-meta">{item.sourceType === 'seedance_asset' && <em>Seedance角色资产</em>}{item.voiceProfile?.voiceName && <em>{item.voiceProfile.voiceName}</em>}<i>{item.selectable ? '可用于生成' : item.unavailableReason}</i></span></span><ChevronRight /></button>) : <div className="empty-card"><Users /><strong>还没有角色</strong><p>创建“故事里的我”或新的虚构角色</p></div>}</div>}
     <FixedAction><button className="primary-wide" onClick={() => navigate('/characters/new')}><Plus />创建新角色</button></FixedAction>
   </MobilePage>;
 }
@@ -766,7 +846,7 @@ export function SceneEditorPage() {
     <section className="scene-cast-card">
       <div className="scene-cast-heading"><span><strong>本幕人物</strong><small>决定这一幕谁会出镜</small></span><button type="button" onClick={() => navigate(`/story-drafts/${draftId}/cast?returnTo=${castReturnTo}`)}>调整</button></div>
       <div className="scene-cast-list">
-        {(context.characters || []).map((character: Json) => <div className="scene-cast-person" key={character.characterId || character.id}><img src={mediaUrl(character.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{character.name}</strong><small><LockKeyhole />已锁定形象</small></span></div>)}
+        {(context.characters || []).map((character: Json) => <div className="scene-cast-person" key={character.characterId || character.id}><img src={mediaUrl(character.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{character.name}</strong><small><LockKeyhole />已锁定形象 · {character.voiceProfile?.voiceName || '默认声线'}</small></span></div>)}
         <button className="scene-cast-add" type="button" onClick={() => navigate(`/story-drafts/${draftId}/cast?returnTo=${castReturnTo}`)}><Plus /><span>添加人物</span></button>
       </div>
     </section>

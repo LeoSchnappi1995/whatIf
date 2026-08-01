@@ -120,15 +120,16 @@ export const SEEDANCE_COMPILER_PROMPT = `
 4. 参考图只负责其已标注的身份、造型、场景或道具一致性，不得照抄无关姿势、构图、文字、Logo、水印和背景。多张图冲突时，以人物身份图的人脸、人物全身图的体态、世界观图的环境为各自维度的最高优先级。
 5. 按 Shot 1、Shot 2……的自然顺序写动作、镜头、表演、对白、环境音、动作音和音乐；导演方案中的 time 只表示大致剪辑占比，不要求模型精确命中秒点。上一镜头动作的结束状态必须成为下一镜头的开始状态，避免静态摆拍、慢推静帧和幻灯片。
 6. 每个角色只能由自己绑定的参考图控制；画面中必须保持角色数量、姓名、位置、视线和动作关系清楚，禁止角色融合、换脸、互换服装或凭空增加人物。
-7. 对白逐字保留，最多两句；注明说话人、出现时间、情绪和口型要求。没有对白时不要强加对白。
-8. 世界观必须在建筑、环境规则、道具、光线、声音或人物动作中被感知，不能退化为普通无关背景；同时继承上一幕 continuityOut。
-9. 最终 Prompt 使用可直接拍摄的具体描述，不写抽象心理，不写“参考上述内容”等模糊指令。中文对白保留中文，其他制作指令使用清晰英文。
-10. 禁止字幕、水印、画中画、拼贴、分屏、额外人物、身份漂移、服装跳变、道具变形、镜头时间倒流，以及未绑定参考图之间的特征串用。
-11. 必须完整使用导演方案中每个镜头的 stateIn、action、stateOut、camera、sound、dialogue、speaker、visibleCharacters、screenOnlyCharacters 和 excludedCharacters，不得只摘录 action，也不得把用户摘要重复三次充当时间轴。
-12. 每个时间段开头必须写清 Physical on-screen cast、Screen-only cast、Must not appear。全局 Characters 只定义身份，不授予每个角色在每个镜头出镜的权限。
-13. 当 visibleCharacters 只有一个角色时，必须写“ONLY [角色] is physically visible in this shot”；excludedCharacters 中的角色不得以身体、脸、背景路人、倒影、照片、屏幕头像或自动补帧的方式出现。
-14. 镜头切换必须显式描述退场和入画。上一镜头人物离开画面后，下一镜头不能因为参考图或全局角色列表将其重新生成。
-15. 最终 Prompt 不得套用固定三段式或固定镜头数。每个 Shot 必须承担必要且不同的可见任务；若两个 action 实质相同，应合并镜头或重新设计具体动作，不得重复用户摘要充当时间轴。
+7. 若角色输入含 voiceProfile 或导演方案 audio.voiceCasting，必须把每个角色的固定音色写入最终 Prompt；同一角色跨镜头、跨幕保持同一声线，不随机改变性别、年龄感、音高、语速或说话质感。
+8. 对白逐字保留，最多两句；注明说话人、出现时间、情绪和口型要求。没有对白时不要强加对白。
+9. 世界观必须在建筑、环境规则、道具、光线、声音或人物动作中被感知，不能退化为普通无关背景；同时继承上一幕 continuityOut。
+10. 最终 Prompt 使用可直接拍摄的具体描述，不写抽象心理，不写“参考上述内容”等模糊指令。中文对白保留中文，其他制作指令使用清晰英文。
+11. 禁止字幕、水印、画中画、拼贴、分屏、额外人物、身份漂移、服装跳变、道具变形、角色声线漂移、随机换音色、镜头时间倒流，以及未绑定参考图之间的特征串用。
+12. 必须完整使用导演方案中每个镜头的 stateIn、action、stateOut、camera、sound、dialogue、speaker、visibleCharacters、screenOnlyCharacters 和 excludedCharacters，不得只摘录 action，也不得把用户摘要重复三次充当时间轴。
+13. 每个时间段开头必须写清 Physical on-screen cast、Screen-only cast、Must not appear。全局 Characters 只定义身份，不授予每个角色在每个镜头出镜的权限。
+14. 当 visibleCharacters 只有一个角色时，必须写“ONLY [角色] is physically visible in this shot”；excludedCharacters 中的角色不得以身体、脸、背景路人、倒影、照片、屏幕头像或自动补帧的方式出现。
+15. 镜头切换必须显式描述退场和入画。上一镜头人物离开画面后，下一镜头不能因为参考图或全局角色列表将其重新生成。
+16. 最终 Prompt 不得套用固定三段式或固定镜头数。每个 Shot 必须承担必要且不同的可见任务；若两个 action 实质相同，应合并镜头或重新设计具体动作，不得重复用户摘要充当时间轴。
 
 输入 JSON：
 {{INPUT_JSON}}
