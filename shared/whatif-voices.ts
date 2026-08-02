@@ -4,6 +4,10 @@ export interface WhatifVoiceProfile {
   voiceDesc: string;
   previewText: string;
   promptVoiceLock: string;
+  provider?: 'local' | 'soul-h5-openapi' | 'soulx-ai-platform';
+  providerVoiceId?: string;
+  previewAudioUrl?: string;
+  avatarUrl?: string;
   preview: {
     lang: string;
     rate: number;
@@ -66,4 +70,9 @@ export const DEFAULT_WHATIF_VOICE_ID = 'whatif_warm_clear_female';
 
 export function findWhatifVoicePreset(voiceId?: string | null) {
   return WHATIF_VOICE_PRESETS.find((item) => item.voiceId === voiceId) || WHATIF_VOICE_PRESETS[0]!;
+}
+
+export function isCompleteWhatifVoiceProfile(value: unknown): value is WhatifVoiceProfile {
+  const voice = value && typeof value === 'object' ? value as Partial<WhatifVoiceProfile> : {};
+  return Boolean(voice.voiceId && voice.voiceName && voice.voiceDesc && voice.previewText && voice.promptVoiceLock);
 }

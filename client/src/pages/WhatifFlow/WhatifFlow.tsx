@@ -55,6 +55,10 @@ function mediaUrl(url?: string) {
   return /^(https?:|data:|blob:)/.test(url) ? url : resolveAppAssetUrl(url);
 }
 
+function resolveVoiceProfile(voiceId: string | undefined, options: WhatifVoiceProfile[]) {
+  return options.find((item) => item.voiceId === voiceId || item.providerVoiceId === voiceId) || findWhatifVoicePreset(voiceId);
+}
+
 function downloadFileName(title?: string, fallback = 'whatif-video') {
   const cleaned = String(title || fallback).trim().replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '');
   return `${cleaned || fallback}.mp4`;
@@ -270,6 +274,21 @@ export function CharacterEditorPage() {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generationStage, setGenerationStage] = useState<CharacterGenerationStage>('idle');
+  const [voiceOptions, setVoiceOptions] = useState<WhatifVoiceProfile[]>(WHATIF_VOICE_PRESETS);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    void whatifRequest<{ items: WhatifVoiceProfile[]; source: string }>('/api/whatif/voices').then((data) => {
+      const options = Array.isArray(data.items) && data.items.length ? data.items : WHATIF_VOICE_PRESETS;
+      setVoiceOptions(options);
+      setVoiceProfile((current) => {
+        if (current.provider || options.some((item) => item.voiceId === current.voiceId)) return current;
+        return options[0] || current;
+      });
+    }).catch(() => {
+      setVoiceOptions(WHATIF_VOICE_PRESETS);
+    });
+  }, []);
 
   useEffect(() => {
     if (!routeCharacterId) return;
@@ -277,38 +296,53 @@ export function CharacterEditorPage() {
       setName(data.name || '');
       setDescription(data.description || '');
       setIsSelf(Boolean(data.isSelf));
-      setVoiceProfile(findWhatifVoicePreset(data.voiceProfile?.voiceId));
+      const options = Array.isArray(data.voiceOptions) && data.voiceOptions.length ? data.voiceOptions as WhatifVoiceProfile[] : voiceOptions;
+      setVoiceOptions(options);
+      setVoiceProfile(data.voiceProfile?.voiceId ? { ...resolveVoiceProfile(data.voiceProfile.voiceId, options), ...data.voiceProfile } : options[0] || findWhatifVoicePreset());
       setAssets(data.assets || []);
       setConfirmed((data.assets || []).filter((item: Json) => item.confirmed).map((item: Json) => item.id));
     }).catch((error) => toast.error(errorMessage(error)));
   }, [routeCharacterId]);
 
   useEffect(() => () => {
-    window.speechSynthesis?.cancel();
+    previewAudioRef.current?.pause();
+    previewAudioRef.current = null;
   }, []);
 
-  const previewVoice = (voice: WhatifVoiceProfile) => {
-    if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
-      toast('当前浏览器暂不支持试听');
-      return;
-    }
+  const previewVoice = async (voice: WhatifVoiceProfile) => {
     if (playingVoiceId === voice.voiceId) {
-      window.speechSynthesis.cancel();
+      previewAudioRef.current?.pause();
+      previewAudioRef.current = null;
       setPlayingVoiceId('');
       return;
     }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(voice.previewText);
-    utterance.lang = voice.preview.lang;
-    utterance.rate = voice.preview.rate;
-    utterance.pitch = voice.preview.pitch;
-    const voices = window.speechSynthesis.getVoices();
-    const matchedVoice = voices.find((item) => item.lang.toLowerCase().startsWith('zh'));
-    if (matchedVoice) utterance.voice = matchedVoice;
-    utterance.onend = () => setPlayingVoiceId('');
-    utterance.onerror = () => setPlayingVoiceId('');
+    previewAudioRef.current?.pause();
+    previewAudioRef.current = null;
+    let url = mediaUrl(voice.previewAudioUrl);
+    if (!url && voice.providerVoiceId) {
+      const preview = await whatifRequest<{ audioUrl?: string }>('/api/whatif/voices/preview', {
+        method: 'POST',
+        data: { voiceProfile: voice },
+        timeoutMs: 25_000,
+      });
+      url = mediaUrl(preview.audioUrl);
+    }
+    if (!url) {
+      toast.error('这个声音暂时没有可试听音频');
+      return;
+    }
+    const audio = new Audio(url);
+    previewAudioRef.current = audio;
+    audio.onended = () => setPlayingVoiceId('');
+    audio.onerror = () => {
+      setPlayingVoiceId('');
+      toast.error('声音试听失败，请换一个声音');
+    };
     setPlayingVoiceId(voice.voiceId);
-    window.speechSynthesis.speak(utterance);
+    await audio.play().catch(() => {
+      setPlayingVoiceId('');
+      toast.error('声音试听失败，请重试');
+    });
   };
 
   const upload = async (files: FileList | null) => {
@@ -495,7 +529,7 @@ export function CharacterEditorPage() {
       <section className="flow-section character-voice-section">
         <div className="flow-section-title"><div><strong>角色声音</strong><small>选择后会作为这个人物的固定声线，后续每一幕自动继承</small></div></div>
         <div className="voice-option-list">
-          {WHATIF_VOICE_PRESETS.map((voice) => (
+          {voiceOptions.map((voice) => (
             <VoiceOptionCard
               key={voice.voiceId}
               voice={voice}

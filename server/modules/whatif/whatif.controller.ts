@@ -45,6 +45,16 @@ export class WhatifController {
     return this.whatif.aiConfig();
   }
 
+  @Get('api/whatif/voices')
+  getVoices() {
+    return this.whatif.voiceOptions();
+  }
+
+  @Post('api/whatif/voices/preview')
+  previewVoice(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    return this.whatif.previewVoice(this.owner(req), body);
+  }
+
   @Post('api/uploads/images')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 12 * 1024 * 1024 } }))
   uploadImage(
