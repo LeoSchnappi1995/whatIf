@@ -77,12 +77,6 @@ async function saveVideo(videoUrl: string | undefined, title?: string) {
     if (!response.ok) throw new Error(`download failed: ${response.status}`);
     const sourceBlob = await response.blob();
     const blob = sourceBlob.type ? sourceBlob : new Blob([sourceBlob], { type: 'video/mp4' });
-    const file = new File([blob], filename, { type: blob.type || 'video/mp4' });
-    if (navigator.canShare?.({ files: [file] }) && navigator.share) {
-      await navigator.share({ files: [file], title: title || 'What If 视频' });
-      toast.success('已打开系统保存面板', { id: toastId });
-      return;
-    }
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = blobUrl;
@@ -979,7 +973,7 @@ export function ResultPage() {
     <VideoStoryPlayer scenes={[{ sceneId: data.sceneId, title: data.sceneTitle, summary: data.directorPlan?.summary || data.userScript, durationSeconds: 15, videoUrl: data.videoUrl, directorPlan: data.directorPlan }]} />
     <section className="result-copy"><span>这一幕</span><h1>{data.directorPlan?.summary || data.userScript}</h1><p>人物、世界观与上一幕状态已保存，续写时会自动继承。</p></section>
     <div className="result-actions"><button onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><Plus /><span><strong>续写下一幕</strong><small>自动带入前情和连续性</small></span><ChevronRight /></button><button onClick={() => navigate(`/stories/${data.storyId}/timeline`)}><Clapperboard /><span><strong>查看完整故事</strong><small>管理所有幕与故事分支</small></span><ChevronRight /></button><button onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><RefreshCw /><span><strong>修改后重新生成</strong><small>新生成按 15 Soul币计费</small></span><ChevronRight /></button></div>
-    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl, data.sceneTitle || data.storyTitle)}><Download />保存到相册</button><button className="primary-wide" onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><Plus />续写下一幕</button></FixedAction>
+    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl, data.sceneTitle || data.storyTitle)}><Download />下载视频</button><button className="primary-wide" onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><Plus />续写下一幕</button></FixedAction>
   </MobilePage>;
 }
 
@@ -1113,7 +1107,7 @@ export function WorkDetailPage() {
     <VideoStoryPlayer scenes={playbackScenes} />
     <section className="result-copy"><span>完整故事</span><h1>{data.title}</h1><p>{data.summary || data.subtitle}</p></section>
     <section className="work-author"><img src={mediaUrl(data.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{data.authorName}</strong><small>{data.likeCount || 0} 人喜欢这个故事</small></span></section>
-    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title)}><Download />保存到相册</button><button className="primary-wide" disabled={!data.canRemix || creating} onClick={async () => { setCreating(true); try { const draft = await whatifRequest<Json>('/api/story-drafts', { method: 'POST', data: { mode: 'remix', sourceWorkId: workId, idempotencyKey: crypto.randomUUID() } }); navigate(`/story-drafts/${draft.draftId}/cast`); } catch (createError) { toast.error(errorMessage(createError)); } finally { setCreating(false); } }}>{creating ? <LoaderCircle className="spin" /> : <Sparkles />}{data.canRemix ? '创作我的版本' : '作者未开放同款'}</button></FixedAction>
+    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title)}><Download />下载视频</button><button className="primary-wide" disabled={!data.canRemix || creating} onClick={async () => { setCreating(true); try { const draft = await whatifRequest<Json>('/api/story-drafts', { method: 'POST', data: { mode: 'remix', sourceWorkId: workId, idempotencyKey: crypto.randomUUID() } }); navigate(`/story-drafts/${draft.draftId}/cast`); } catch (createError) { toast.error(errorMessage(createError)); } finally { setCreating(false); } }}>{creating ? <LoaderCircle className="spin" /> : <Sparkles />}{data.canRemix ? '创作我的版本' : '作者未开放同款'}</button></FixedAction>
   </MobilePage>;
 }
 
