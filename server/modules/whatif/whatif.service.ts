@@ -29,7 +29,8 @@ import {
 } from '../../database/schema';
 import { PROMPT_VERSIONS } from '../../prompts/whatif-prompt-registry';
 import { WhatifAiService } from './whatif-ai.service';
-import { findWhatifVoicePreset, WHATIF_VOICE_PRESETS, type WhatifVoiceProfile } from '../../../shared/whatif-voices';
+import { findWhatifVoicePreset, type WhatifVoiceProfile } from '../../../shared/whatif-voices';
+import { WhatifVoiceService } from './whatif-voice.service';
 
 const ASSET_BASE = 'assets/whatif';
 const FFMPEG_PATH = ffmpegInstaller.path;
@@ -216,6 +217,7 @@ export class WhatifService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly files: FileService,
     private readonly ai: WhatifAiService,
+    private readonly voices: WhatifVoiceService,
   ) {}
 
   private id(prefix: string) {
@@ -247,7 +249,8 @@ export class WhatifService {
 
   private normalizeVoiceProfile(value: unknown, fallbackInput: { name?: unknown; description?: unknown } = {}): WhatifVoiceProfile {
     const raw = value && typeof value === 'object' ? value as Partial<WhatifVoiceProfile> : {};
-    return findWhatifVoicePreset(raw.voiceId || this.defaultVoiceIdForCharacter(fallbackInput));
+    const fallback = findWhatifVoicePreset(raw.voiceId || this.defaultVoiceIdForCharacter(fallbackInput));
+    return this.voices.normalizeVoiceProfile(raw, fallback);
   }
 
   private voiceProfileFromAsset(asset: { referencePaths?: unknown } | undefined) {
@@ -810,7 +813,8 @@ export class WhatifService {
     if (!character) throw new NotFoundException({ code: 'CHARACTER_NOT_FOUND', message: '角色不存在' });
     const assets = await this.db.select().from(whatifCharacterAssets).where(and(eq(whatifCharacterAssets.characterId, characterId), eq(whatifCharacterAssets.ownerId, ownerId))).orderBy(desc(whatifCharacterAssets.createdAt));
     const visibleAssets = assets.filter((asset) => asset.kind !== 'voice-profile');
-    return { ...character, voiceProfile: this.voiceProfileFromAssets(assets, character), voiceOptions: WHATIF_VOICE_PRESETS, avatarUrl: await this.signed(character.avatarPath), assets: await Promise.all(visibleAssets.map(async (asset) => ({ ...asset, assetId: asset.id, imageUrl: await this.signed(asset.imagePath) }))), traceId: this.traceId() };
+    const voiceOptions = await this.voices.voiceOptions();
+    return { ...character, voiceProfile: this.voiceProfileFromAssets(assets, character), voiceOptions: voiceOptions.items, voiceOptionsSource: voiceOptions.source, avatarUrl: await this.signed(character.avatarPath), assets: await Promise.all(visibleAssets.map(async (asset) => ({ ...asset, assetId: asset.id, imageUrl: await this.signed(asset.imagePath) }))), traceId: this.traceId() };
   }
 
   async listCharacters(ownerId: string) {
@@ -1562,5 +1566,13 @@ export class WhatifService {
 
   aiConfig() {
     return { ...this.ai.configSummary(), traceId: this.traceId() };
+  }
+
+  async voiceOptions() {
+    return this.voices.voiceOptions();
+  }
+
+  async previewVoice(ownerId: string, body: AnyRecord) {
+    return this.voices.generatePreviewAudio(ownerId, body.voiceProfile || body, String(body.text || ''));
   }
 }
