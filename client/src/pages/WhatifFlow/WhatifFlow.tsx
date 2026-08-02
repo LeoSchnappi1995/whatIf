@@ -64,6 +64,134 @@ function downloadFileName(title?: string, fallback = 'whatif-video') {
   return `${cleaned || fallback}.mp4`;
 }
 
+type NativeBridgeWindow = Window & Record<string, any>;
+type NativeBridgeFunction = (...args: any[]) => unknown;
+
+function normalizeBridgeResult(result: unknown): unknown {
+  if (typeof result !== 'string') return result;
+  const text = result.trim();
+  if (!text || !/^[{[]/.test(text)) return result;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return result;
+  }
+}
+
+function bridgeResultSucceeded(result: unknown) {
+  const normalized = normalizeBridgeResult(result);
+  if (normalized === undefined || normalized === null) return true;
+  if (typeof normalized === 'boolean') return normalized;
+  if (typeof normalized !== 'object') return true;
+  const payload = normalized as Record<string, any>;
+  if (typeof payload.success === 'boolean') return payload.success;
+  const code = payload.code ?? payload.errCode ?? payload.status;
+  if (code !== undefined) return Number(code) === 0 || Number(code) === 200;
+  const message = String(payload.errMsg || payload.msg || payload.message || '').toLowerCase();
+  if (/fail|error|denied|cancel|unsupported/.test(message)) return false;
+  return true;
+}
+
+function bridgeResultMessage(result: unknown) {
+  const normalized = normalizeBridgeResult(result);
+  if (normalized && typeof normalized === 'object') {
+    const payload = normalized as Record<string, any>;
+    return String(payload.errMsg || payload.msg || payload.message || '原生保存失败');
+  }
+  return '原生保存失败';
+}
+
+function absoluteMediaUrl(url: string) {
+  if (/^(https?:|file:)/.test(url)) return url;
+  if (/^(data:|blob:)/.test(url)) return '';
+  try {
+    return new URL(url, window.location.href).toString();
+  } catch {
+    return '';
+  }
+}
+
+async function callNativeSaveFunction(
+  fn: NativeBridgeFunction,
+  args: unknown[],
+  options: { requireResponse?: boolean } = {},
+) {
+  const timeoutMs = options.requireResponse ? 5_000 : 800;
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timer = 0;
+    const complete = (result?: unknown) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      if (bridgeResultSucceeded(result)) {
+        resolve();
+      } else {
+        reject(new Error(bridgeResultMessage(result)));
+      }
+    };
+    timer = window.setTimeout(() => {
+      if (options.requireResponse) {
+        reject(new Error('native bridge timeout'));
+      } else {
+        resolve();
+      }
+    }, timeoutMs);
+    try {
+      const result = fn(...args, complete);
+      if (result && typeof (result as Promise<unknown>).then === 'function') {
+        void (result as Promise<unknown>).then(complete).catch(reject);
+      } else if (result !== undefined) {
+        complete(result);
+      }
+    } catch (nativeError) {
+      reject(nativeError);
+    }
+  });
+}
+
+function pushNativeSaveAttempt(
+  attempts: Array<() => Promise<void>>,
+  target: unknown,
+  method: string,
+  url: string,
+  requireResponse = false,
+) {
+  const bridgeTarget = target as Record<string, unknown> | undefined;
+  const fn = bridgeTarget?.[method];
+  if (typeof fn === 'function') {
+    attempts.push(() => callNativeSaveFunction((...args) => (fn as NativeBridgeFunction).apply(bridgeTarget, args), [url], { requireResponse }));
+  }
+}
+
+async function trySaveVideoToPhotosAlbum(url: string) {
+  const nativeUrl = absoluteMediaUrl(url);
+  if (!nativeUrl) return false;
+  const nativeWindow = window as NativeBridgeWindow;
+  const attempts: Array<() => Promise<void>> = [];
+  pushNativeSaveAttempt(attempts, nativeWindow.SRNApi?.MediaAlbum, 'saveVideo', nativeUrl);
+  pushNativeSaveAttempt(attempts, nativeWindow.SRNApiMediaAlbum, 'saveVideo', nativeUrl);
+  pushNativeSaveAttempt(attempts, nativeWindow.SRNApiMediaAlbumModule, 'saveVideo', nativeUrl);
+  pushNativeSaveAttempt(attempts, nativeWindow.NativeSRNApiMediaAlbumModule, 'saveVideo', nativeUrl);
+  pushNativeSaveAttempt(attempts, nativeWindow.bridge, 'saveVideoToPhotosAlbum', nativeUrl);
+  pushNativeSaveAttempt(attempts, nativeWindow.bridge, 'saveVideo', nativeUrl);
+  if (typeof nativeWindow.bridge?.dispatch === 'function') {
+    const payload = { filePath: nativeUrl, path: nativeUrl, url: nativeUrl, videoUrl: nativeUrl };
+    attempts.push(() => callNativeSaveFunction((...args) => nativeWindow.bridge.dispatch(...args), ['action_media_saveVideoToPhotosAlbum', payload], { requireResponse: true }));
+    attempts.push(() => callNativeSaveFunction((...args) => nativeWindow.bridge.dispatch(...args), ['action_media_saveVideo', payload], { requireResponse: true }));
+  }
+
+  for (const attempt of attempts) {
+    try {
+      await attempt();
+      return true;
+    } catch {
+      // Try the next known bridge shape; unsupported containers often fail silently.
+    }
+  }
+  return false;
+}
+
 async function saveVideo(videoUrl: string | undefined, title?: string) {
   const url = mediaUrl(videoUrl);
   if (!url) {
@@ -71,8 +199,13 @@ async function saveVideo(videoUrl: string | undefined, title?: string) {
     return;
   }
   const filename = downloadFileName(title);
-  const toastId = toast.loading('正在准备视频');
+  const toastId = toast.loading('正在保存到相册');
   try {
+    if (await trySaveVideoToPhotosAlbum(url)) {
+      toast.success('已保存到相册', { id: toastId });
+      return;
+    }
+    toast.loading('当前环境暂不支持直接保存到相册，正在下载视频', { id: toastId });
     const response = await fetch(url);
     if (!response.ok) throw new Error(`download failed: ${response.status}`);
     const sourceBlob = await response.blob();
@@ -973,7 +1106,7 @@ export function ResultPage() {
     <VideoStoryPlayer scenes={[{ sceneId: data.sceneId, title: data.sceneTitle, summary: data.directorPlan?.summary || data.userScript, durationSeconds: 15, videoUrl: data.videoUrl, directorPlan: data.directorPlan }]} />
     <section className="result-copy"><span>这一幕</span><h1>{data.directorPlan?.summary || data.userScript}</h1><p>人物、世界观与上一幕状态已保存，续写时会自动继承。</p></section>
     <div className="result-actions"><button onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><Plus /><span><strong>续写下一幕</strong><small>自动带入前情和连续性</small></span><ChevronRight /></button><button onClick={() => navigate(`/stories/${data.storyId}/timeline`)}><Clapperboard /><span><strong>查看完整故事</strong><small>管理所有幕与故事分支</small></span><ChevronRight /></button><button onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><RefreshCw /><span><strong>修改后重新生成</strong><small>新生成按 15 Soul币计费</small></span><ChevronRight /></button></div>
-    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl, data.sceneTitle || data.storyTitle)}><Download />下载视频</button><button className="primary-wide" onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><Plus />续写下一幕</button></FixedAction>
+    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl, data.sceneTitle || data.storyTitle)}><Download />保存到相册</button><button className="primary-wide" onClick={() => navigate(`/story-drafts/${data.draftId}/scene/new?parentSceneId=${data.sceneId}`)}><Plus />续写下一幕</button></FixedAction>
   </MobilePage>;
 }
 
@@ -1107,7 +1240,7 @@ export function WorkDetailPage() {
     <VideoStoryPlayer scenes={playbackScenes} />
     <section className="result-copy"><span>完整故事</span><h1>{data.title}</h1><p>{data.summary || data.subtitle}</p></section>
     <section className="work-author"><img src={mediaUrl(data.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{data.authorName}</strong><small>{data.likeCount || 0} 人喜欢这个故事</small></span></section>
-    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title)}><Download />下载视频</button><button className="primary-wide" disabled={!data.canRemix || creating} onClick={async () => { setCreating(true); try { const draft = await whatifRequest<Json>('/api/story-drafts', { method: 'POST', data: { mode: 'remix', sourceWorkId: workId, idempotencyKey: crypto.randomUUID() } }); navigate(`/story-drafts/${draft.draftId}/cast`); } catch (createError) { toast.error(errorMessage(createError)); } finally { setCreating(false); } }}>{creating ? <LoaderCircle className="spin" /> : <Sparkles />}{data.canRemix ? '创作我的版本' : '作者未开放同款'}</button></FixedAction>
+    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title)}><Download />保存到相册</button><button className="primary-wide" disabled={!data.canRemix || creating} onClick={async () => { setCreating(true); try { const draft = await whatifRequest<Json>('/api/story-drafts', { method: 'POST', data: { mode: 'remix', sourceWorkId: workId, idempotencyKey: crypto.randomUUID() } }); navigate(`/story-drafts/${draft.draftId}/cast`); } catch (createError) { toast.error(errorMessage(createError)); } finally { setCreating(false); } }}>{creating ? <LoaderCircle className="spin" /> : <Sparkles />}{data.canRemix ? '创作我的版本' : '作者未开放同款'}</button></FixedAction>
   </MobilePage>;
 }
 
