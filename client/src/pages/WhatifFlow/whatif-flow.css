@@ -380,6 +380,12 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 9px;
 }
+.required-asset-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+.optional-asset-grid {
+  margin-top: 12px;
+}
 .asset-tile {
   position: relative;
   aspect-ratio: 0.82;
@@ -392,6 +398,14 @@
 .asset-tile.selected {
   border-color: #24c9c1;
   box-shadow: 0 0 0 3px rgba(36, 201, 193, 0.1);
+}
+.asset-tile.failed {
+  border-color: #f0a29b;
+  background: #fff4f2;
+}
+.asset-tile.processing {
+  border-color: #bce7e4;
+  background: #f0fbfa;
 }
 .asset-tile img {
   width: 100%;
@@ -455,6 +469,10 @@
   background: #eefafa;
   color: #148f8a;
 }
+.asset-generation-notice.failed {
+  background: #fff3f1;
+  color: #c94e45;
+}
 .asset-generation-notice svg {
   width: 17px;
   min-width: 17px;
@@ -516,6 +534,43 @@
 }
 .point-refine button svg {
   width: 15px;
+}
+.advanced-assets-section {
+  padding: 0;
+  overflow: hidden;
+}
+.advanced-assets-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  color: #202526;
+  text-align: left;
+}
+.advanced-assets-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.advanced-assets-toggle strong {
+  font-size: 15px;
+}
+.advanced-assets-toggle small {
+  color: #949c9d;
+  font-size: 10px;
+}
+.advanced-assets-toggle svg {
+  width: 18px;
+  transition: transform 0.2s ease;
+}
+.advanced-assets-section.open .advanced-assets-toggle svg {
+  transform: rotate(180deg);
+}
+.advanced-assets-section .optional-asset-grid {
+  padding: 0 16px 16px;
 }
 .visibility-card > div {
   display: grid;

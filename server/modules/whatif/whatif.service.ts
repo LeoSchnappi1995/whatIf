@@ -825,12 +825,28 @@ export class WhatifService {
     const characterId = String(body.characterId || '');
     const [character] = await this.db.select().from(whatifCharacters).where(and(eq(whatifCharacters.id, characterId), eq(whatifCharacters.ownerId, ownerId))).limit(1);
     if (!character) throw new NotFoundException({ code: 'CHARACTER_NOT_FOUND', message: '请先保存角色名称和描写' });
-    const profile = await this.ai.buildCharacterProfile({ name: character.name, description: character.description });
-    const generated = await this.ai.generateCharacterAsset({ name: character.name, description: profile.stableDescription, identityAnchors: profile.identityAnchors, kind: String(body.kind || 'identity-face'), instruction: String(body.instruction || ''), referenceImages: Array.isArray(body.referenceImages) ? body.referenceImages.map(String) : [], previousAsset: String(body.previousAsset || '') });
-    const imagePath = await this.archiveRemote(generated.imageUrl, `${characterId}-${body.kind || 'asset'}`);
+    const kind = String(body.kind || 'identity-face');
+    const instruction = String(body.instruction || '');
+    const referenceImages = Array.isArray(body.referenceImages) ? body.referenceImages.map(String) : [];
+    const previousAsset = String(body.previousAsset || '');
     const assetId = this.id('character_asset');
-    await this.db.insert(whatifCharacterAssets).values({ id: assetId, characterId, ownerId, version: character.currentVersion, kind: String(body.kind || 'identity-face'), status: 'ready', referencePaths: [...(Array.isArray(body.referenceImages) ? body.referenceImages : []), { provider: generated.provider, providerModel: generated.providerModel, provenance: 'seedream-generated' }], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, confirmed: false });
-    return { taskId: assetId, status: 'success', assetId, kind: String(body.kind || 'identity-face'), imageUrl: await this.signed(imagePath), profile, traceId: generated.traceId };
+    const requestReferencePaths = [
+      ...referenceImages,
+      { instruction, previousAsset, provenance: 'seedream-generation-request' },
+    ];
+    await this.db.insert(whatifCharacterAssets).values({ id: assetId, characterId, ownerId, version: character.currentVersion, kind, status: 'processing', referencePaths: requestReferencePaths, confirmed: false });
+    try {
+      const profile = await this.ai.buildCharacterProfile({ name: character.name, description: character.description });
+      const generated = await this.ai.generateCharacterAsset({ name: character.name, description: profile.stableDescription, identityAnchors: profile.identityAnchors, kind, instruction, referenceImages, previousAsset });
+      const imagePath = await this.archiveRemote(generated.imageUrl, `${characterId}-${kind || 'asset'}`);
+      await this.db.update(whatifCharacterAssets).set({ status: 'ready', referencePaths: [...referenceImages, { provider: generated.provider, providerModel: generated.providerModel, provenance: 'seedream-generated', instruction, previousAsset }], imagePath, promptVersion: generated.promptVersion, modelTraceId: generated.traceId, errorCode: null, errorMessage: null, updatedAt: new Date() }).where(eq(whatifCharacterAssets.id, assetId));
+      return { taskId: assetId, status: 'success', assetId, kind, imageUrl: await this.signed(imagePath), profile, traceId: generated.traceId };
+    } catch (error) {
+      const code = String((error as { code?: unknown })?.code || 'CHARACTER_IMAGE_FAILED');
+      const message = error instanceof Error ? error.message : '人物图片生成失败';
+      await this.db.update(whatifCharacterAssets).set({ status: 'failed', errorCode: code, errorMessage: message, referencePaths: [...requestReferencePaths, { provenance: 'seedream-generation-failed', code, message }], updatedAt: new Date() }).where(eq(whatifCharacterAssets.id, assetId));
+      throw error;
+    }
   }
 
   async confirmCharacterAssets(ownerId: string, characterId: string, body: AnyRecord) {
