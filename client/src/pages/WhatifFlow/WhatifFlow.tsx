@@ -247,18 +247,18 @@ function requiredAssetInstruction(kind: CharacterAssetKind, customInstruction = 
 }
 
 function upsertCharacterAsset(assets: Json[], asset: Json, kind: CharacterAssetKind) {
-  const nextAsset = { ...asset, kind: asset.kind || kind };
+  const nextAsset = { ...asset, kind: asset.kind || kind, status: asset.status === 'success' ? 'ready' : asset.status };
   return [nextAsset, ...assets.filter((item) => item.kind !== kind)];
 }
 
 function characterAssetByKind(assets: Json[], kind: CharacterAssetKind) {
   const sameKind = assets.filter((item) => item.kind === kind);
-  return sameKind.find((item) => item.status === 'ready' && item.imageUrl) || sameKind[0];
+  return sameKind.find((item) => item.imageUrl && !['failed', 'processing'].includes(String(item.status || 'ready'))) || sameKind[0];
 }
 
 function readyCharacterAssetByKind(assets: Json[], kind: CharacterAssetKind) {
   const asset = characterAssetByKind(assets, kind);
-  return asset?.status === 'ready' && asset.imageUrl ? asset : undefined;
+  return asset?.imageUrl && !['failed', 'processing'].includes(String(asset.status || 'ready')) ? asset : undefined;
 }
 
 function VoiceOptionCard({
