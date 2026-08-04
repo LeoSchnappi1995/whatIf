@@ -295,8 +295,13 @@ export class WhatifService {
     if (/^https?:\/\//.test(path) || path.startsWith('data:image')) return path;
     try {
       return await this.files.createSignedUrl(path, 60 * 60 * 24 * 7);
-    } catch {
-      return path;
+    } catch (error) {
+      // Bundled public assets are valid relative URLs. Uploaded media paths are
+      // not: returning a bare filename here makes the client resolve it under
+      // the versioned `/client/` bundle and produces a guaranteed 404.
+      if (path.startsWith(`${ASSET_BASE}/`)) return path;
+      this.logger.warn(`Unable to sign media path ${path}: ${error instanceof Error ? error.message : error}`);
+      return '';
     }
   }
 
@@ -552,7 +557,7 @@ export class WhatifService {
         .where(and(eq(whatifPublications.status, 'published'), eq(whatifPublications.visibility, 'public')))
         .orderBy(desc(whatifPublications.likeCount), desc(whatifPublications.updatedAt))
         .limit(pageSize + offset + 1);
-      publicWorks.push(...await Promise.all(rows.map(async (row) => ({ id: row.id, workId: row.id, title: row.title, subtitle: row.summary || '连续剧情 · 15秒一幕', coverUrl: await this.signed(row.coverPath), videoUrl: await this.signed(row.videoPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: row.likeCount, durationSeconds: Math.max(15, (Array.isArray(row.sceneIds) ? row.sceneIds.length : 1) * 15), canRemix: row.canRemix, templateId: row.canRemix ? `publication:${row.id}` : undefined }))));
+      publicWorks.push(...await Promise.all(rows.map(async (row) => ({ id: row.id, workId: row.id, title: row.title, subtitle: row.summary || '连续剧情 · 15秒一幕', coverUrl: await this.signed(row.coverPath) || `${ASSET_BASE}/cinema.png`, videoUrl: await this.signed(row.videoPath), authorName: 'Whatif 创作者', avatarUrl: `${ASSET_BASE}/self.jpg`, likeCount: row.likeCount, durationSeconds: Math.max(15, (Array.isArray(row.sceneIds) ? row.sceneIds.length : 1) * 15), canRemix: row.canRemix, templateId: row.canRemix ? `publication:${row.id}` : undefined }))));
     } catch (error) {
       if (!this.isMissingTable(error)) throw error;
     }

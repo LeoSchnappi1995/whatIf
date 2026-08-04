@@ -206,10 +206,19 @@ function StatusCard({
 
 function WorkCard({ work, onOpen }: { work: WhatifWork; onOpen: () => void }) {
   const isGeneratedStory = work.sourceType === 'generated_story';
+  const fallbackCoverUrl = resolveAppAssetUrl('assets/whatif/cinema.png');
   return (
     <article className="work-card" onClick={onOpen}>
       <div className="work-cover">
-        <img src={resolveAppAssetUrl(work.coverUrl)} alt={work.title} loading="lazy" />
+        <img
+          src={resolveAppAssetUrl(work.coverUrl || 'assets/whatif/cinema.png')}
+          alt={work.title}
+          loading="lazy"
+          onError={(event) => {
+            event.currentTarget.onerror = null;
+            event.currentTarget.src = fallbackCoverUrl;
+          }}
+        />
         <span className="mini-play" aria-hidden="true">
           <Play size={12} fill="currentColor" />
         </span>
