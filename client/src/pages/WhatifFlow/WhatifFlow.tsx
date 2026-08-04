@@ -1262,12 +1262,12 @@ export function PublishPage() {
   if (error) return <MobilePage title="发布故事"><ErrorState message={error} /></MobilePage>;
   if (!timeline) return <MobilePage title="发布故事"><LoadingState /></MobilePage>;
   const successfulScenes = timeline.scenes.filter((scene: Json) => scene.status === 'success');
-  return <MobilePage title="发布故事" eyebrow={`${selectedSceneIds.length} 幕 · ${selectedSceneIds.length * 15}s 连续故事`}>
-    <section className="publish-cover"><img src={mediaUrl(timeline.story.coverUrl) || mediaUrl('assets/whatif/cinema.png')} /><span>按选择顺序连续播放</span></section>
-    <section className="flow-section"><div className="flow-section-title"><div><strong>选择要发布的幕</strong><small>会作为一条故事连续播放</small></div></div><div className="publish-scene-list">{successfulScenes.map((scene: Json) => <button className={selectedSceneIds.includes(scene.id) ? 'selected' : ''} key={scene.id} onClick={() => setSelectedSceneIds((old) => old.includes(scene.id) ? old.filter((id) => id !== scene.id) : [...old, scene.id])}><i>{selectedSceneIds.includes(scene.id) && <Check />}</i><span><strong>第 {scene.sequence} 幕 · {scene.title}</strong><small>{(scene.directorPlan as Json)?.summary || scene.userScript}</small></span></button>)}</div></section>
+  return <MobilePage title="发布故事" eyebrow={`${selectedSceneIds.length} 幕 · ${selectedSceneIds.length * 15}s 完整视频`}>
+    <section className="publish-cover"><img src={mediaUrl(timeline.story.coverUrl) || mediaUrl('assets/whatif/cinema.png')} /><span>发布后合成为一个完整视频文件</span></section>
+    <section className="flow-section"><div className="flow-section-title"><div><strong>选择要发布的幕</strong><small>发布时会按选择顺序合成单个完整视频</small></div></div><div className="publish-scene-list">{successfulScenes.map((scene: Json) => <button className={selectedSceneIds.includes(scene.id) ? 'selected' : ''} key={scene.id} onClick={() => setSelectedSceneIds((old) => old.includes(scene.id) ? old.filter((id) => id !== scene.id) : [...old, scene.id])}><i>{selectedSceneIds.includes(scene.id) && <Check />}</i><span><strong>第 {scene.sequence} 幕 · {scene.title}</strong><small>{(scene.directorPlan as Json)?.summary || scene.userScript}</small></span></button>)}</div></section>
     <section className="flow-card"><label>故事标题<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="AI 会根据剧情自动生成" /></label><label>故事简介<textarea value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="一句话告诉大家，这个平行世界发生了什么" /></label></section>
     <section className="publish-options"><button onClick={() => setCanRemix(!canRemix)}><span><strong>允许创作同款</strong><small>只复用公开故事线索，不复用私密人物资产</small></span><i className={`toggle ${canRemix ? 'on' : ''}`} /></button><button onClick={() => setVisibility(visibility === 'public' ? 'private' : 'public')}><span><strong>发布到 Whatif 广场</strong><small>{visibility === 'public' ? '公开可见，提交后进入内容审核' : '仅自己可见'}</small></span><i className={`toggle ${visibility === 'public' ? 'on' : ''}`} /></button></section>
-    <FixedAction><button className="primary-wide" disabled={publishing || !selectedSceneIds.length} onClick={() => void publish()}>{publishing ? <LoaderCircle className="spin" /> : <Send />}{publishing ? '正在发布…' : `发布 ${selectedSceneIds.length * 15}s 故事`}</button></FixedAction>
+    <FixedAction><button className="primary-wide" disabled={publishing || !selectedSceneIds.length} onClick={() => void publish()}>{publishing ? <LoaderCircle className="spin" /> : <Send />}{publishing ? '正在合成并发布…' : `合成并发布 ${selectedSceneIds.length * 15}s 故事`}</button></FixedAction>
   </MobilePage>;
 }
 
@@ -1287,13 +1287,21 @@ export function WorkDetailPage() {
     <VideoStoryPlayer scenes={playbackScenes} />
     <section className="result-copy"><span>完整故事</span><h1>{data.title}</h1><p>{data.summary || data.subtitle}</p></section>
     <section className="work-author"><img src={mediaUrl(data.avatarUrl) || mediaUrl('assets/whatif/self.jpg')} /><span><strong>{data.authorName}</strong><small>{data.likeCount || 0} 人喜欢这个故事</small></span></section>
-    <FixedAction><button className="secondary-wide" onClick={() => void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title)}><Download />保存到相册</button><button className="primary-wide" disabled={!data.canRemix || creating} onClick={async () => { setCreating(true); try { const draft = await whatifRequest<Json>('/api/story-drafts', { method: 'POST', data: { mode: 'remix', sourceWorkId: workId, idempotencyKey: crypto.randomUUID() } }); navigate(`/story-drafts/${draft.draftId}/cast`); } catch (createError) { toast.error(errorMessage(createError)); } finally { setCreating(false); } }}>{creating ? <LoaderCircle className="spin" /> : <Sparkles />}{data.canRemix ? '创作我的版本' : '作者未开放同款'}</button></FixedAction>
+    <FixedAction><button className="secondary-wide" onClick={savePublishedVideo}><Download />保存到相册</button><button className="primary-wide" disabled={!data.canRemix || creating} onClick={async () => { setCreating(true); try { const draft = await whatifRequest<Json>('/api/story-drafts', { method: 'POST', data: { mode: 'remix', sourceWorkId: workId, idempotencyKey: crypto.randomUUID() } }); navigate(`/story-drafts/${draft.draftId}/cast`); } catch (createError) { toast.error(errorMessage(createError)); } finally { setCreating(false); } }}>{creating ? <LoaderCircle className="spin" /> : <Sparkles />}{data.canRemix ? '创作我的版本' : '作者未开放同款'}</button></FixedAction>
   </MobilePage>;
 }
 
 export function InviteFriendsPage() {
   const { draftId = '' } = useParams();
   const navigate = useNavigate();
+  const fullVideoMissing = !data.videoUrl && data.scenes.length > 1;
+  const savePublishedVideo = () => {
+    if (fullVideoMissing) {
+      toast.error('完整视频还没有合成成功，请稍后刷新重试');
+      return;
+    }
+    void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title);
+  };
   const [friends, setFriends] = useState<Json[]>([]);
   const [selected, setSelected] = useState('');
   const [sending, setSending] = useState(false);

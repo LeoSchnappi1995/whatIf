@@ -1478,7 +1478,8 @@ export class WhatifService {
       publicationVideoPath = await this.composePublicationVideo(successfulTasks, publicationId);
     } catch (error) {
       this.logger.warn(`publication video compose failed: ${error instanceof Error ? error.message : error}`);
-      publicationVideoPath = selected.length === 1 ? firstTask.videoPath || '' : '';
+      if (selected.length > 1) this.fail('PUBLICATION_VIDEO_COMPOSE_FAILED', '完整故事视频合成失败，请稍后重试');
+      publicationVideoPath = firstTask.videoPath || '';
     }
     await this.db.insert(whatifPublications).values({ id: publicationId, storyId, ownerId, sceneIds: validSelectedIds, title: String(body.title || copy.title), summary: String(body.summary || copy.summary), coverPath: firstTask?.posterPath || firstTask?.lastFramePath || timeline.story.coverPath, videoPath: publicationVideoPath || null, status: body.publish === true ? 'published' : 'draft', visibility: body.visibility === 'private' ? 'private' : 'public', canRemix: body.canRemix !== false, remixTemplate: { storyTitle: timeline.story.title, setting: timeline.story.setting, sceneClues: selected.map((scene) => scene.userScript), composeStatus: publicationVideoPath ? 'success' : 'fallback_split' } });
     return { publicationId, workPath: `/works/${publicationId}`, title: body.title || copy.title, summary: body.summary || copy.summary, tags: copy.tags, status: body.publish === true ? 'published' : 'draft', traceId: this.traceId() };
