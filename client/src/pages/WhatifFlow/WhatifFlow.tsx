@@ -38,6 +38,7 @@ import './whatif-flow.css';
 type Json = Record<string, any>;
 type CharacterAssetKind = 'identity-face' | 'body-front' | 'body-left' | 'body-right' | 'body-back';
 type CharacterGenerationStage = 'idle' | 'profile' | 'identity' | 'body' | 'optional' | 'confirm';
+type VideoProviderChoice = 'dashscope_happyhorse' | 'seedance';
 
 const characterAssetKinds: CharacterAssetKind[] = ['identity-face', 'body-front', 'body-left', 'body-right', 'body-back'];
 const requiredCharacterAssetKinds: CharacterAssetKind[] = ['identity-face', 'body-front'];
@@ -45,7 +46,10 @@ const requiredCharacterAssetKinds: CharacterAssetKind[] = ['identity-face', 'bod
 function errorMessage(error: unknown) {
   const candidate = error as { code?: string; response?: { data?: { error?: { code?: string; message?: string; details?: string; path?: string } } }; message?: string };
   const payload = candidate?.response?.data?.error;
-  if (payload?.message) return [payload.message, payload.code ? `(${payload.code})` : '', payload.details ? `\n${payload.details}` : ''].filter(Boolean).join(' ');
+  if (payload?.code === 'SEEDANCE_CHARACTER_ASSET_REJECTED') {
+    return payload.message || '所选人物资产未通过视频模型校验，请重新生成人物资产后重试';
+  }
+  if (payload?.message) return [payload.message, payload.code ? `(${payload.code})` : ''].filter(Boolean).join(' ');
   if (candidate?.code === 'ECONNABORTED' || /timeout/i.test(candidate?.message || '')) return 'AI 分镜生成超时，请重新生成，或直接使用剧情生成视频';
   return candidate?.message || '操作失败，请重试';
 }
@@ -958,6 +962,7 @@ export function SceneEditorPage() {
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [videoProvider, setVideoProvider] = useState<VideoProviderChoice>('dashscope_happyhorse');
   const [error, setError] = useState('');
   const [editingTarget, setEditingTarget] = useState('');
   const [refinement, setRefinement] = useState('');
@@ -982,6 +987,7 @@ export function SceneEditorPage() {
           setStoryboardGenerated(Boolean(localDraft.storyboardGenerated));
           setPlan(localDraft.plan || null);
           setInheritPreviousLastFrame(localDraft.inheritPreviousLastFrame !== false && Boolean(data.previous?.lastFrameAvailable));
+          if (localDraft.videoProvider === 'seedance' || localDraft.videoProvider === 'dashscope_happyhorse') setVideoProvider(localDraft.videoProvider);
           return;
         } catch {
           window.sessionStorage.removeItem(storageKey);
@@ -1003,8 +1009,8 @@ export function SceneEditorPage() {
 
   useEffect(() => {
     if (!context) return;
-    window.sessionStorage.setItem(storageKey, JSON.stringify({ script, originalScript, storyboardGenerated, plan, inheritPreviousLastFrame }));
-  }, [context, inheritPreviousLastFrame, originalScript, plan, script, storageKey, storyboardGenerated]);
+    window.sessionStorage.setItem(storageKey, JSON.stringify({ script, originalScript, storyboardGenerated, plan, inheritPreviousLastFrame, videoProvider }));
+  }, [context, inheritPreviousLastFrame, originalScript, plan, script, storageKey, storyboardGenerated, videoProvider]);
 
   const runPreview = useCallback(async (nextScript: string, refinements?: Json) => {
     if (nextScript.trim().length < 6) {
@@ -1066,7 +1072,7 @@ export function SceneEditorPage() {
     setPreviewing(false);
     setSubmitting(true);
     try {
-      const result = await whatifRequest<Json>(`/api/story-drafts/${draftId}/scenes/generate`, { method: 'POST', data: { script, ...(plan ? { directorPlan: plan } : {}), parentSceneId, branchId, inheritPreviousLastFrame } });
+      const result = await whatifRequest<Json>(`/api/story-drafts/${draftId}/scenes/generate`, { method: 'POST', data: { script, ...(plan ? { directorPlan: plan } : {}), parentSceneId, branchId, inheritPreviousLastFrame, videoProvider } });
       window.sessionStorage.removeItem(storageKey);
       navigate(`/video-tasks/${result.taskId}`);
     } catch (error) {
@@ -1111,6 +1117,13 @@ export function SceneEditorPage() {
       <button className="scene-advanced-toggle" type="button" onClick={() => setAdvancedOpen(!advancedOpen)}><span><strong>高级设置（可选）</strong><small>调整服装、背景、道具与声音</small></span><ChevronDown /></button>
       {advancedOpen && <div className="scene-advanced-content">{advancedItems.map(({ label, target, icon: Icon, value }) => <button type="button" key={target} onClick={() => setEditingTarget(target)}><Icon /><span><strong>{label}</strong><small>{value || 'AI 将根据人物、世界观和当前剧情自动完成'}</small></span><ChevronRight /></button>)}</div>}
     </section>
+    <section className="video-provider-card">
+      <div><strong>视频模型</strong><small>{videoProvider === 'dashscope_happyhorse' ? 'HappyHorse' : 'Seedance 2.0'}</small></div>
+      <div className="video-provider-segment" role="radiogroup" aria-label="视频模型">
+        <button type="button" role="radio" aria-checked={videoProvider === 'dashscope_happyhorse'} className={videoProvider === 'dashscope_happyhorse' ? 'active' : ''} onClick={() => setVideoProvider('dashscope_happyhorse')}><Sparkles />HappyHorse</button>
+        <button type="button" role="radio" aria-checked={videoProvider === 'seedance'} className={videoProvider === 'seedance' ? 'active' : ''} onClick={() => setVideoProvider('seedance')}><Film />Seedance</button>
+      </div>
+    </section>
     {editingTarget && <div className="refine-drawer"><div><strong>只修改：{editingTarget}</strong><button onClick={() => setEditingTarget('')}>×</button></div><textarea value={refinement} onChange={(e) => setRefinement(e.target.value)} placeholder={`告诉 AI ${editingTarget}具体要怎么调整；未点名的内容保持不变`} /><button disabled={previewing || !refinement.trim()} onClick={() => { if (!storyboardGenerated) setOriginalScript(script); void runPreview(plan ? originalScript || script : script, { target: editingTarget, instruction: refinement, approvedPlan: plan }); setEditingTarget(''); setRefinement(''); }}><WandSparkles />只调整这一项</button></div>}
     <FixedAction><div className="price-hint"><span>{storyboardGenerated ? '将按当前分镜生成约 15 秒成片' : '将按当前剧情描述生成约 15 秒成片'}</span><strong>15 Soul币</strong></div><button className="primary-wide" disabled={script.trim().length < 6 || submitting || capacity?.status === 'overflow'} onClick={() => void generate()}>{submitting ? <LoaderCircle className="spin" /> : <Film />}{submitting ? '正在提交…' : '生成视频'}</button></FixedAction>
   </MobilePage>;
@@ -1131,12 +1144,25 @@ export function GenerationPage() {
   }, [navigate, taskId]);
   useEffect(() => { void poll(); const timer = window.setInterval(() => void poll(), 5000); return () => window.clearInterval(timer); }, [poll]);
   const progress = task?.progress || 8;
-  return <MobilePage title="正在生成" eyebrow={task?.storyTitle || '15秒连续故事'} className="generation-page" action={<button onClick={() => navigate('/stories')}>稍后查看</button>}>
+  const failed = task?.status === 'failed';
+  const modelStepLabel = task?.videoProvider === 'dashscope_happyhorse' ? 'HappyHorse 生成画面' : 'Seedance 生成画面与声音';
+  const generationSteps = ['专业分镜', '锁定人物与世界', modelStepLabel, '质量检查与归档'].map((label, index) => {
+    if (failed) {
+      if (index < 2) return { label, state: 'done', stateLabel: '已完成' };
+      if (index === 2) return { label, state: 'failed', stateLabel: '生成失败' };
+      return { label, state: '', stateLabel: '未执行' };
+    }
+    const threshold = [12, 20, 25, 92][index];
+    const done = progress >= threshold;
+    const active = progress + 15 >= threshold;
+    return { label, state: done ? 'done' : active ? 'active' : '', stateLabel: done ? '已完成' : active ? '进行中' : '等待中' };
+  });
+  return <MobilePage title={failed ? '生成失败' : '正在生成'} eyebrow={task?.storyTitle || '15秒连续故事'} className={`generation-page${failed ? ' generation-failed' : ''}`} action={<button onClick={() => navigate('/stories')}>{failed ? '返回故事' : '稍后查看'}</button>}>
     {error && !task && <ErrorState message={error} retry={() => void poll()} />}
-    <section className="generation-stage"><div className="generation-orbit"><i /><b>{progress}%</b></div><h1>{task?.stageLabel || 'AI 正在完成专业制作'}<span className="dynamic-dots">...</span></h1><p>可以离开页面，任务会继续在服务端生成。完成后可从首页或“我的故事”回来查看。</p></section>
-    <section className="generation-steps">{['专业分镜', '锁定人物与世界', 'Seedance 生成画面与声音', '质量检查与归档'].map((label, index) => { const threshold = [12, 20, 25, 92][index]; const done = progress >= threshold; return <div className={done ? 'done' : progress + 15 >= threshold ? 'active' : ''} key={label}><i>{done ? <Check /> : index + 1}</i><span><strong>{label}</strong><small>{done ? '已完成' : progress + 15 >= threshold ? '进行中' : '等待中'}</small></span></div>; })}</section>
-    {task?.status === 'failed' && <section className="failed-panel"><CircleAlert /><strong>这次没有生成成功，不会扣费</strong><p>{task.errorMessage || '模型返回失败'}</p><code>{task.errorCode}</code><button onClick={() => navigate(`/story-drafts/${task.draftId}/scene/new?parentSceneId=${task.sceneId}`)}>重新编辑剧情</button></section>}
-    <FixedAction><button className="secondary-wide" onClick={() => navigate('/stories')}>返回我的故事，后台继续生成</button></FixedAction>
+    <section className="generation-stage"><div className="generation-orbit" style={{ '--progress': failed ? '100%' : `${progress}%` } as React.CSSProperties}><i />{failed ? <CircleAlert /> : <b>{progress}%</b>}</div><h1>{failed ? '本次生成已停止' : task?.stageLabel || 'AI 正在完成专业制作'}{!failed && <span className="dynamic-dots">...</span>}</h1><p>{failed ? '已保留你的剧情和人物选择，可以返回编辑后重新生成。' : '可以离开页面，任务会继续在服务端生成。完成后可从首页或“我的故事”回来查看。'}</p></section>
+    <section className="generation-steps">{generationSteps.map(({ label, state, stateLabel }, index) => <div className={state} key={label}><i>{state === 'done' ? <Check /> : state === 'failed' ? <CircleAlert /> : index + 1}</i><span><strong>{label}</strong><small>{stateLabel}</small></span></div>)}</section>
+    {failed && <section className="failed-panel"><CircleAlert /><strong>这次没有生成成功，不会扣费</strong><p>{task.errorMessage || '模型返回失败'}</p><code>{task.errorCode}</code><button onClick={() => navigate(`/story-drafts/${task.draftId}/scene/new?parentSceneId=${task.sceneId}`)}>重新编辑剧情</button></section>}
+    <FixedAction><button className="secondary-wide" onClick={() => navigate(failed ? `/story-drafts/${task?.draftId}/scene/new?parentSceneId=${task?.sceneId}` : '/stories')}>{failed ? '返回编辑剧情' : '返回我的故事，后台继续生成'}</button></FixedAction>
   </MobilePage>;
 }
 
@@ -1283,6 +1309,14 @@ export function WorkDetailPage() {
   const playbackScenes = data.videoUrl
     ? [{ sceneId: `${data.workId}-full`, title: data.title, summary: data.summary || data.subtitle, durationSeconds: data.durationSeconds, videoUrl: data.videoUrl, coverUrl: data.coverUrl }]
     : data.scenes;
+  const fullVideoMissing = !data.videoUrl && data.scenes.length > 1;
+  const savePublishedVideo = () => {
+    if (fullVideoMissing) {
+      toast.error('完整视频还没有合成成功，请稍后刷新重试');
+      return;
+    }
+    void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title);
+  };
   return <MobilePage title={data.title} eyebrow={`${data.scenes.length} 幕 · ${data.durationSeconds}s`} action={<button onClick={async () => { if (navigator.share) { await navigator.share({ title: data.title, text: data.summary, url: window.location.href }).catch(() => undefined); } else { await navigator.clipboard.writeText(window.location.href); toast.success('链接已复制'); } }}><Share2 /></button>}>
     <VideoStoryPlayer scenes={playbackScenes} />
     <section className="result-copy"><span>完整故事</span><h1>{data.title}</h1><p>{data.summary || data.subtitle}</p></section>
@@ -1294,14 +1328,6 @@ export function WorkDetailPage() {
 export function InviteFriendsPage() {
   const { draftId = '' } = useParams();
   const navigate = useNavigate();
-  const fullVideoMissing = !data.videoUrl && data.scenes.length > 1;
-  const savePublishedVideo = () => {
-    if (fullVideoMissing) {
-      toast.error('完整视频还没有合成成功，请稍后刷新重试');
-      return;
-    }
-    void saveVideo(data.videoUrl || playbackScenes[0]?.videoUrl, data.title);
-  };
   const [friends, setFriends] = useState<Json[]>([]);
   const [selected, setSelected] = useState('');
   const [sending, setSending] = useState(false);

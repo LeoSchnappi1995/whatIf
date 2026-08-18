@@ -24,6 +24,21 @@ function responseMessage(value: unknown, fallback: string) {
   return safeErrorText(message, fallback);
 }
 
+function publicDetails(code: unknown, httpStatus: number, details: unknown) {
+  if (!details) return undefined;
+  const normalizedCode = String(code || '');
+  if (
+    httpStatus >= 500
+    || normalizedCode === 'SEEDANCE_CHARACTER_ASSET_REJECTED'
+    || /^SEEDANCE_CREATE_HTTP_/i.test(normalizedCode)
+    || /^DASHSCOPE_/i.test(normalizedCode)
+    || /^YIKE_/i.test(normalizedCode)
+  ) {
+    return undefined;
+  }
+  return safeErrorText(typeof details === 'string' ? details : JSON.stringify(details));
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
@@ -44,16 +59,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       const raw = exception.getResponse();
       const declaredStatus = Number(objectValue(raw, 'httpStatus') || 0);
       if (declaredStatus >= 400 && declaredStatus <= 599) httpStatus = declaredStatus;
+      const code = safeErrorText(objectValue(raw, 'code'), HTTP_STATUS_TO_RESPONSE_CODE_MAP[httpStatus]);
       const details = objectValue(raw, 'details');
-      payload = { error: { code: safeErrorText(objectValue(raw, 'code'), HTTP_STATUS_TO_RESPONSE_CODE_MAP[httpStatus]), message: typeof raw === 'string' ? safeErrorText(raw) : responseMessage(raw, exception.message), details: details ? safeErrorText(typeof details === 'string' ? details : JSON.stringify(details)) : undefined, timestamp: Date.now(), httpStatus, path } };
+      payload = { error: { code, message: typeof raw === 'string' ? safeErrorText(raw) : responseMessage(raw, exception.message), details: publicDetails(code, httpStatus, details), timestamp: Date.now(), httpStatus, path } };
     } else if (typeof exception === 'object' && exception !== null && (exception as { code?: unknown }).code === '22P02') {
       httpStatus = HttpStatus.NOT_FOUND;
       payload = { error: { code: ResponseCode.NOT_FOUND, message: '资源不存在', timestamp: Date.now(), httpStatus, path } };
     } else {
       const declaredStatus = Number(objectValue(exception, 'httpStatus') || 0);
       httpStatus = declaredStatus >= 400 && declaredStatus <= 599 ? declaredStatus : HttpStatus.INTERNAL_SERVER_ERROR;
+      const code = safeErrorText(objectValue(exception, 'code'), ResponseCode.INTERNAL_ERROR);
       const details = objectValue(exception, 'details');
-      payload = { error: { code: safeErrorText(objectValue(exception, 'code'), ResponseCode.INTERNAL_ERROR), message: safeErrorText(exception instanceof Error ? exception.message : exception, '服务器内部错误'), details: details ? safeErrorText(typeof details === 'string' ? details : JSON.stringify(details)) : undefined, timestamp: Date.now(), httpStatus, path } };
+      payload = { error: { code, message: safeErrorText(exception instanceof Error ? exception.message : exception, '服务器内部错误'), details: publicDetails(code, httpStatus, details), timestamp: Date.now(), httpStatus, path } };
     }
     response.status(httpStatus).json(payload);
   }

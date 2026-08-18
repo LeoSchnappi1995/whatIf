@@ -1148,6 +1148,12 @@ export class WhatifService {
     const context = await this.draftContext(ownerId, draftId);
     const script = String(body.script || '').trim();
     if (!script) this.fail('SCENE_SCRIPT_REQUIRED', '请描述这一幕发生什么');
+    const requestedVideoProvider = String(body.videoProvider || '').trim().toLowerCase();
+    const videoProvider = requestedVideoProvider
+      ? ({ seedance: 'seedance', happyhorse: 'dashscope_happyhorse', dashscope_happyhorse: 'dashscope_happyhorse' } as Record<string, string>)[requestedVideoProvider]
+      : undefined;
+    if (requestedVideoProvider && !videoProvider) this.fail('VIDEO_PROVIDER_INVALID', '请选择 Seedance 或 HappyHorse 生成视频', 422);
+    const videoProviderConfig = this.ai.videoProviderConfig(videoProvider);
     const traceId = this.traceId();
     this.logger.log(JSON.stringify({
       event: 'whatif.video.generate.received',
@@ -1227,6 +1233,7 @@ export class WhatifService {
         directionMode: hasProfessionalPlan ? 'approved_professional_storyboard' : 'direct_user_script',
         inheritPreviousLastFrame,
         previousLastFrame: previousLastFrame ? { taskId: previousLastFrame.taskId, path: previousLastFrame.path } : null,
+        videoProvider: videoProviderConfig.provider,
       },
       compilation,
       referenceAssets,
@@ -1238,11 +1245,12 @@ export class WhatifService {
       taskId,
       sceneId,
       draftId,
+      videoProvider: videoProviderConfig.provider,
       requestSnapshot: baseRequestSnapshot,
     }));
     await this.db.transaction(async (tx) => {
       await tx.insert(whatifScenes).values({ id: sceneId, storyId: story.id, branchId: branch.id, ownerId, parentSceneId: body.parentSceneId || scenes.at(-1)?.id || null, sequence, title: String(directorPlan.title || `第${sequence}幕`), userScript: script, directorPlan, seedancePrompt: compilation.prompt, continuitySnapshot: directorPlan.continuityOut || {}, status: 'submitting' });
-      await tx.insert(whatifVideoTasks).values({ id: taskId, sceneId, storyId: story.id, ownerId, model: this.ai.configSummary().video.model, promptVersion: compilation.promptVersion, status: 'submitting', stage: 'submitting', progress: 12, requestSnapshot: baseRequestSnapshot, traceId });
+      await tx.insert(whatifVideoTasks).values({ id: taskId, sceneId, storyId: story.id, ownerId, model: videoProviderConfig.model, promptVersion: compilation.promptVersion, status: 'submitting', stage: 'submitting', progress: 12, requestSnapshot: baseRequestSnapshot, traceId });
       await tx.update(whatifStories).set({ activeBranchId: branch.id, updatedAt: new Date() }).where(eq(whatifStories.id, story.id));
     });
     try {
@@ -1251,12 +1259,13 @@ export class WhatifService {
         promptBody: `${compilation.promptBody}\n${styleLockPrompt}\nNegative constraints: ${compilation.negativePrompt}`,
         referenceImages,
         referenceAssets,
+        videoProvider,
         traceId,
         taskId,
         sceneId,
       });
       await this.db.transaction(async (tx) => {
-        await tx.update(whatifVideoTasks).set({ providerTaskId: created.providerTaskId, status: 'queued', stage: 'model_generating', progress: 22, inputMode: created.inputMode, requestSnapshot: { ...baseRequestSnapshot, seedance: created.requestLog }, responseSnapshot: created.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
+        await tx.update(whatifVideoTasks).set({ providerTaskId: created.providerTaskId, status: 'queued', stage: 'model_generating', progress: 22, inputMode: created.inputMode, requestSnapshot: { ...baseRequestSnapshot, video: created.requestLog }, responseSnapshot: created.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
         await tx.update(whatifScenes).set({ status: 'generating', updatedAt: new Date() }).where(eq(whatifScenes.id, sceneId));
         await tx.update(whatifStoryDrafts).set({ latestSceneDraft: {}, updatedAt: new Date() }).where(eq(whatifStoryDrafts.id, draftId));
       });
@@ -1266,7 +1275,7 @@ export class WhatifService {
       const message = error instanceof Error ? error.message : '视频任务提交失败';
       const requestLog = (error as { requestLog?: unknown })?.requestLog;
       await this.db.transaction(async (tx) => {
-        await tx.update(whatifVideoTasks).set({ status: 'failed', stage: 'failed', progress: 100, requestSnapshot: requestLog ? { ...baseRequestSnapshot, seedance: requestLog } : baseRequestSnapshot, errorCode: code, errorMessage: message, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
+        await tx.update(whatifVideoTasks).set({ status: 'failed', stage: 'failed', progress: 100, requestSnapshot: requestLog ? { ...baseRequestSnapshot, video: requestLog } : baseRequestSnapshot, errorCode: code, errorMessage: message, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, taskId));
         await tx.update(whatifScenes).set({ status: 'failed', chargeStatus: 'not_charged', updatedAt: new Date() }).where(eq(whatifScenes.id, sceneId));
       });
       throw error;
@@ -1274,13 +1283,22 @@ export class WhatifService {
   }
 
   private stageLabel(stage: string) {
-    return ({ directing: 'AI 正在完成专业分镜', submitting: '正在提交视频任务', model_generating: 'Seedance 正在生成画面与声音', quality_check: '正在检查人物、动作和声音', archiving: '正在保存成片', completed: '成片已完成' } as Record<string, string>)[stage] || '正在制作你的 15 秒故事';
+    return ({ directing: 'AI 正在完成专业分镜', submitting: '正在提交视频任务', model_generating: '视频模型正在生成画面', quality_check: '正在检查人物、动作和声音', archiving: '正在保存成片', completed: '成片已完成' } as Record<string, string>)[stage] || '正在制作你的 15 秒故事';
   }
 
   private mapProgress(status: string, previous: number) {
     if (['succeeded', 'success', 'completed', 'done', 'finished'].includes(status)) return 96;
     if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) return 100;
     return Math.min(88, Math.max(previous + 4, 28));
+  }
+
+  private videoProviderFromTask(task: AnyRecord) {
+    const requestSnapshot = (task.requestSnapshot && typeof task.requestSnapshot === 'object' ? task.requestSnapshot : {}) as AnyRecord;
+    const providerTaskId = String(task.providerTaskId || '');
+    return String(
+      requestSnapshot.resolvedInput?.videoProvider
+      || (providerTaskId.startsWith('dashscope_happyhorse:') ? 'dashscope_happyhorse' : providerTaskId.startsWith('yike:') ? 'yike' : 'seedance'),
+    );
   }
 
   async getVideoTask(ownerId: string, taskId: string) {
@@ -1330,10 +1348,17 @@ export class WhatifService {
             }).where(eq(whatifVideoTasks.id, task.id));
             await tx.update(whatifScenes).set({ status: 'success', selectedResultId: task.id, chargeStatus: 'charged', updatedAt: new Date() }).where(eq(whatifScenes.id, task.sceneId));
           });
-        } else if (failed) {
-          const errorMessage = upstream.error || 'Seedance 返回失败，但没有错误详情';
+        } else if (done) {
+          const errorCode = `${this.videoProviderFromTask(task).toUpperCase()}_VIDEO_URL_MISSING`;
           await this.db.transaction(async (tx) => {
-            await tx.update(whatifVideoTasks).set({ status: 'failed', stage: 'failed', progress: 100, errorCode: 'SEEDANCE_TASK_FAILED', errorMessage, responseSnapshot: upstream.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, task.id));
+            await tx.update(whatifVideoTasks).set({ status: 'failed', stage: 'failed', progress: 100, errorCode, errorMessage: '视频模型已完成，但没有返回可播放成片地址', responseSnapshot: upstream.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, task.id));
+            await tx.update(whatifScenes).set({ status: 'failed', chargeStatus: 'not_charged', updatedAt: new Date() }).where(eq(whatifScenes.id, task.sceneId));
+          });
+        } else if (failed) {
+          const errorMessage = upstream.error || '视频模型返回失败，但没有错误详情';
+          const errorCode = `${this.videoProviderFromTask(task).toUpperCase()}_TASK_FAILED`;
+          await this.db.transaction(async (tx) => {
+            await tx.update(whatifVideoTasks).set({ status: 'failed', stage: 'failed', progress: 100, errorCode, errorMessage, responseSnapshot: upstream.raw, updatedAt: new Date() }).where(eq(whatifVideoTasks.id, task.id));
             await tx.update(whatifScenes).set({ status: 'failed', chargeStatus: 'not_charged', updatedAt: new Date() }).where(eq(whatifScenes.id, task.sceneId));
           });
         } else {
@@ -1353,7 +1378,8 @@ export class WhatifService {
     const [scene] = await this.db.select().from(whatifScenes).where(eq(whatifScenes.id, current.sceneId)).limit(1);
     const [story] = await this.db.select().from(whatifStories).where(eq(whatifStories.id, current.storyId)).limit(1);
     const media = this.ai.videoMedia(current.responseSnapshot);
-    return { taskId: current.id, sceneId: current.sceneId, storyId: current.storyId, draftId: story?.sourceDraftId, storyTitle: story?.title, sceneTitle: scene?.title, userScript: scene?.userScript, directorPlan: scene?.directorPlan, status: current.status, stage: current.stage, stageLabel: this.stageLabel(current.stage), progress: current.progress, inputMode: current.inputMode, videoUrl: await this.signed(current.videoPath), posterUrl: await this.signed(current.posterPath) || media.firstFrameUrl, lastFrameUrl: await this.signed(current.lastFramePath) || media.lastFrameUrl, errorCode: current.errorCode, errorMessage: current.errorMessage, chargeStatus: scene?.chargeStatus, priceSob: scene?.priceSob || 15, traceId: current.traceId || this.traceId() };
+    const videoProvider = this.videoProviderFromTask(current);
+    return { taskId: current.id, sceneId: current.sceneId, storyId: current.storyId, draftId: story?.sourceDraftId, storyTitle: story?.title, sceneTitle: scene?.title, userScript: scene?.userScript, directorPlan: scene?.directorPlan, status: current.status, stage: current.stage, stageLabel: this.stageLabel(current.stage), progress: current.progress, inputMode: current.inputMode, videoProvider, videoUrl: await this.signed(current.videoPath), posterUrl: await this.signed(current.posterPath) || media.firstFrameUrl, lastFrameUrl: await this.signed(current.lastFramePath) || media.lastFrameUrl, errorCode: current.errorCode, errorMessage: current.errorMessage, chargeStatus: scene?.chargeStatus, priceSob: scene?.priceSob || 15, traceId: current.traceId || this.traceId() };
   }
 
   async getVideoResult(ownerId: string, taskId: string) {

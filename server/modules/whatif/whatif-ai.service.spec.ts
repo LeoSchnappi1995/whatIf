@@ -319,3 +319,213 @@ describe('WhatifAiService Seedance compiler', () => {
     delete process.env.SEEDANCE_MODEL;
   });
 });
+
+describe('WhatifAiService video provider middle layer', () => {
+  const originalEnv = { ...process.env };
+
+  class SdkRequest {
+    constructor(map: Record<string, unknown>) {
+      Object.assign(this, map);
+    }
+  }
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.env = { ...originalEnv };
+  });
+
+  it('keeps Seedance as the default provider', async () => {
+    delete process.env.WHATIF_VIDEO_PROVIDER;
+    delete process.env.VIDEO_PROVIDER;
+    process.env.SEEDANCE_API_KEY = 'test-key';
+    process.env.SEEDANCE_MODEL = 'test-model';
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ id: 'seedance-task-1', status: 'queued' }),
+      } as Response);
+
+    const result = await service.createVideo({ prompt: 'make a 15 second vertical story' });
+
+    expect(result.providerTaskId).toBe('seedance-task-1');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/contents/generations/tasks');
+  });
+
+  it('submits Yike video jobs through the new provider without changing the business API', async () => {
+    process.env.WHATIF_VIDEO_PROVIDER = 'yike';
+    process.env.YIKE_ACCESS_KEY_ID = 'ak';
+    process.env.YIKE_ACCESS_KEY_SECRET = 'sk';
+    process.env.YIKE_MODEL = 'happyhorse-1.1';
+    const service = new WhatifAiService();
+    const submitVideoGenerationJob = jest.fn().mockResolvedValue({
+      body: { jobId: 'job-1', requestId: 'req-1' },
+    });
+    jest.spyOn(service as any, 'createYikeClient').mockResolvedValue({
+      client: { submitVideoGenerationJob },
+      SubmitVideoGenerationJobRequest: SdkRequest,
+    });
+
+    const result = await service.createVideo({
+      prompt: '@图片1 walks through neon rain.',
+      promptBody: '@图片1 walks through neon rain.',
+      referenceAssets: [
+        { url: 'https://example.com/hero.png', token: '@图片1', purpose: '主角人物身份参考', category: 'character_identity' },
+      ],
+      traceId: '11111111-2222-3333-4444-555555555555',
+      taskId: 'task-local-1',
+      sceneId: 'scene-1',
+    });
+
+    expect(result.providerTaskId).toBe('yike:job-1');
+    expect(result.inputMode).toBe('reference_image');
+    expect(submitVideoGenerationJob).toHaveBeenCalledTimes(1);
+    const request = submitVideoGenerationJob.mock.calls[0][0] as Record<string, any>;
+    expect(request.model).toBe('happyhorse-1.1');
+    expect(request.jobType).toBe('reference_to_video');
+    expect(request.resolution).toBe('720P');
+    expect(request.aspectRatio).toBe('9:16');
+    expect(request.duration).toBe('15');
+    expect(request.clientToken).toBe('11111111222233334444555555555555');
+    const input = JSON.parse(request.input);
+    expect(input.Prompt).toContain('image 1: 主角人物身份参考');
+    expect(input.Prompt).toContain('image 1 walks through neon rain.');
+    expect(input.Medias).toEqual([{ Type: 'image', Url: 'https://example.com/hero.png' }]);
+  });
+
+  it('routes yike-prefixed task status polling and extracts the output video URL', async () => {
+    process.env.WHATIF_VIDEO_PROVIDER = 'yike';
+    process.env.YIKE_ACCESS_KEY_ID = 'ak';
+    process.env.YIKE_ACCESS_KEY_SECRET = 'sk';
+    const service = new WhatifAiService();
+    const getVideoGenerationJob = jest.fn().mockResolvedValue({
+      body: {
+        videoGenerationJob: {
+          jobId: 'job-1',
+          status: 'Finished',
+          output: JSON.stringify({ Medias: [{ OutputUrl: 'https://oss.example.com/final.mp4?Expires=1' }] }),
+        },
+      },
+    });
+    jest.spyOn(service as any, 'createYikeClient').mockResolvedValue({
+      client: { getVideoGenerationJob },
+      GetVideoGenerationJobRequest: SdkRequest,
+    });
+
+    const result = await service.getVideoStatus('yike:job-1');
+
+    expect(getVideoGenerationJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1' }));
+    expect(result.status).toBe('success');
+    expect(result.videoUrl).toBe('https://oss.example.com/final.mp4?Expires=1');
+    expect(result.firstFrameUrl).toBe('');
+    expect(result.lastFrameUrl).toBe('');
+  });
+
+  it('submits DashScope HappyHorse text-to-video jobs through the provider switch', async () => {
+    process.env.WHATIF_VIDEO_PROVIDER = 'dashscope_happyhorse';
+    process.env.DASHSCOPE_API_KEY = 'dashscope-key';
+    process.env.DASHSCOPE_BASE = 'https://workspace.cn-beijing.maas.aliyuncs.com';
+    process.env.DASHSCOPE_HAPPYHORSE_DURATION = '4';
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ output: { task_id: 'dash-task-1', task_status: 'PENDING' } }),
+      } as Response);
+
+    const result = await service.createVideo({ prompt: 'make a vertical sci-fi video' });
+
+    expect(result.providerTaskId).toBe('dashscope_happyhorse:dash-task-1');
+    expect(result.status).toBe('queued');
+    expect(result.inputMode).toBe('text_only');
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis');
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(request.model).toBe('happyhorse-1.1-t2v');
+    expect(request.input.prompt).toBe('make a vertical sci-fi video');
+    expect(request.input.media).toBeUndefined();
+    expect(request.parameters.duration).toBe(4);
+    expect((fetchMock.mock.calls[0][1]?.headers as Record<string, string>)['X-DashScope-Async']).toBe('enable');
+  });
+
+  it('allows one request to override the default video provider', async () => {
+    delete process.env.WHATIF_VIDEO_PROVIDER;
+    process.env.SEEDANCE_API_KEY = 'test-key';
+    process.env.SEEDANCE_MODEL = 'test-model';
+    process.env.DASHSCOPE_API_KEY = 'dashscope-key';
+    process.env.DASHSCOPE_BASE = 'https://workspace.cn-beijing.maas.aliyuncs.com';
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ output: { task_id: 'dash-task-override', task_status: 'PENDING' } }),
+      } as Response);
+
+    const result = await service.createVideo({ prompt: 'make a vertical sci-fi video', videoProvider: 'happyhorse' });
+
+    expect(result.providerTaskId).toBe('dashscope_happyhorse:dash-task-override');
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(request.model).toBe('happyhorse-1.1-t2v');
+  });
+
+  it('maps existing character assets into DashScope HappyHorse reference-to-video inputs', async () => {
+    process.env.WHATIF_VIDEO_PROVIDER = 'happyhorse';
+    process.env.DASHSCOPE_API_KEY = 'dashscope-key';
+    process.env.DASHSCOPE_BASE = 'https://workspace.cn-beijing.maas.aliyuncs.com/';
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ output: { task_id: 'dash-task-2', task_status: 'PENDING' } }),
+      } as Response);
+
+    const result = await service.createVideo({
+      prompt: '@图片1 stands on a cyber platform. @图片2 is the locked world.',
+      promptBody: '@图片1 stands on a cyber platform. @图片2 is the locked world.',
+      referenceAssets: [
+        { url: 'https://example.com/hero.png', token: '@图片1', purpose: '主角人物身份参考', category: 'character_identity' },
+        { url: 'https://example.com/world.png', token: '@图片2', purpose: '赛博城市世界观参考', category: 'world_style' },
+      ],
+    });
+
+    expect(result.providerTaskId).toBe('dashscope_happyhorse:dash-task-2');
+    expect(result.inputMode).toBe('reference_image');
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(request.model).toBe('happyhorse-1.1-r2v');
+    expect(request.input.prompt).toContain('[Image 1]: 主角人物身份参考');
+    expect(request.input.prompt).toContain('[Image 1] stands on a cyber platform.');
+    expect(request.input.media).toEqual([
+      { type: 'reference_image', url: 'https://example.com/hero.png' },
+      { type: 'reference_image', url: 'https://example.com/world.png' },
+    ]);
+    expect(request.parameters.duration).toBe(15);
+  });
+
+  it('routes DashScope HappyHorse status polling and extracts the video URL', async () => {
+    process.env.WHATIF_VIDEO_PROVIDER = 'dashscope_happyhorse';
+    process.env.DASHSCOPE_API_KEY = 'dashscope-key';
+    process.env.DASHSCOPE_BASE = 'https://workspace.cn-beijing.maas.aliyuncs.com';
+    const service = new WhatifAiService();
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ output: { task_status: 'SUCCEEDED', video_url: 'https://oss.example.com/final.mp4' } }),
+      } as Response);
+
+    const result = await service.getVideoStatus('dashscope_happyhorse:dash-task-1');
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/tasks/dash-task-1');
+    expect(result.status).toBe('success');
+    expect(result.videoUrl).toBe('https://oss.example.com/final.mp4');
+    expect(result.firstFrameUrl).toBe('');
+    expect(result.lastFrameUrl).toBe('');
+  });
+});

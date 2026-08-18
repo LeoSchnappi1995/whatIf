@@ -31,7 +31,7 @@ function getErrorMessage(error: unknown) {
       message?: string;
     };
     const payload = candidate.response?.data?.error;
-    return payload?.message ? `${payload.message}${payload.code ? ` (${payload.code})` : ''}${payload.details ? `：${payload.details}` : ''}` : candidate.message;
+    return payload?.message ? `${payload.message}${payload.code ? ` (${payload.code})` : ''}` : candidate.message;
   }
   return undefined;
 }

@@ -16,11 +16,22 @@ import {
 type CodedError = Error & { code?: string; httpStatus?: number; details?: unknown };
 type ReferenceAssetCategory = 'character_identity' | 'character_body' | 'world_style' | 'generic';
 type ImageProviderSource = 'gateway' | 'ark';
+type VideoProviderName = 'seedance' | 'yike' | 'dashscope_happyhorse';
 type SeedanceReferenceAsset = {
   url: string;
   token?: string;
   purpose?: string;
   category?: ReferenceAssetCategory;
+};
+type VideoCreateInput = {
+  prompt: string;
+  promptBody?: string;
+  referenceImages?: string[];
+  referenceAssets?: SeedanceReferenceAsset[];
+  videoProvider?: string;
+  traceId?: string;
+  taskId?: string;
+  sceneId?: string;
 };
 
 function characterVoiceLock(character: Record<string, any>) {
@@ -53,14 +64,68 @@ export class WhatifAiService {
   private readonly seedanceKey = process.env.SEEDANCE_API_KEY || this.mediaKey;
   private readonly seedanceBase = process.env.SEEDANCE_API_BASE || 'https://ark.cn-beijing.volces.com/api/v3';
   private readonly seedanceModel = process.env.SEEDANCE_MODEL || '';
+  private readonly videoProvider = this.resolveVideoProvider(process.env.WHATIF_VIDEO_PROVIDER || process.env.VIDEO_PROVIDER || 'seedance');
+  private readonly yikeAccessKeyId = process.env.YIKE_ACCESS_KEY_ID || process.env.ALIBABA_CLOUD_ACCESS_KEY_ID || process.env.ALICLOUD_ACCESS_KEY_ID || '';
+  private readonly yikeAccessKeySecret = process.env.YIKE_ACCESS_KEY_SECRET || process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET || process.env.ALICLOUD_ACCESS_KEY_SECRET || '';
+  private readonly yikeRegionId = process.env.YIKE_REGION_ID || 'cn-shanghai';
+  private readonly yikeEndpoint = process.env.YIKE_ENDPOINT || '';
+  private readonly yikeModel = process.env.YIKE_MODEL || 'happyhorse-1.1';
+  private readonly yikeTaskPrefix = 'yike:';
+  private readonly dashscopeApiKey = process.env.DASHSCOPE_API_KEY || process.env.HAPPYHORSE_API_KEY || '';
+  private readonly dashscopeBase = (process.env.DASHSCOPE_BASE || process.env.HAPPYHORSE_API_BASE || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+  private readonly dashscopeTextModel = process.env.DASHSCOPE_HAPPYHORSE_T2V_MODEL || process.env.HAPPYHORSE_T2V_MODEL || 'happyhorse-1.1-t2v';
+  private readonly dashscopeReferenceModel = process.env.DASHSCOPE_HAPPYHORSE_R2V_MODEL || process.env.HAPPYHORSE_R2V_MODEL || 'happyhorse-1.1-r2v';
+  private readonly dashscopeTaskPrefix = 'dashscope_happyhorse:';
 
   configSummary() {
     return {
       text: { configured: Boolean(this.textGatewayToken || this.deepseekKey), model: this.textGatewayModel || this.deepseekModel },
       image: { configured: Boolean((this.imageGatewayEnabled && this.imageGatewayToken) || this.mediaKey), model: this.imageModel },
-      video: { configured: Boolean(this.seedanceKey && this.seedanceModel), model: this.seedanceModel },
+      video: {
+        provider: this.videoProvider,
+        configured: this.currentVideoProviderConfigured(),
+        model: this.currentVideoProviderModel(),
+        providers: {
+          seedance: { configured: Boolean(this.seedanceKey && this.seedanceModel), model: this.seedanceModel },
+          yike: { configured: this.yikeConfigured(), model: this.yikeModel, regionId: this.yikeRegionId },
+          dashscopeHappyhorse: {
+            configured: this.dashscopeHappyhorseConfigured(),
+            textModel: this.dashscopeTextModel,
+            referenceModel: this.dashscopeReferenceModel,
+            base: this.dashscopeBase,
+          },
+        },
+      },
       promptVersions: PROMPT_VERSIONS,
     };
+  }
+
+  private resolveVideoProvider(value: string): VideoProviderName {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'yike') return 'yike';
+    if (['dashscope_happyhorse', 'dashscope-happyhorse', 'happyhorse', 'dashscope'].includes(normalized)) return 'dashscope_happyhorse';
+    return 'seedance';
+  }
+
+  videoProviderConfig(videoProvider?: string) {
+    const provider = this.resolveVideoProvider(videoProvider || this.videoProvider);
+    return {
+      provider,
+      configured: this.currentVideoProviderConfigured(provider),
+      model: this.currentVideoProviderModel(provider),
+    };
+  }
+
+  private currentVideoProviderConfigured(provider = this.videoProvider) {
+    if (provider === 'yike') return this.yikeConfigured();
+    if (provider === 'dashscope_happyhorse') return this.dashscopeHappyhorseConfigured();
+    return Boolean(this.seedanceKey && this.seedanceModel);
+  }
+
+  private currentVideoProviderModel(provider = this.videoProvider) {
+    if (provider === 'yike') return this.yikeModel;
+    if (provider === 'dashscope_happyhorse') return `${this.dashscopeTextModel}/${this.dashscopeReferenceModel}`;
+    return this.seedanceModel;
   }
 
   private codedError(code: string, message: string, httpStatus = 502, details?: unknown): CodedError {
@@ -845,15 +910,394 @@ export class WhatifAiService {
     return matched ? Number(matched[1]) : -1;
   }
 
-  async createVideo(input: {
-    prompt: string;
-    promptBody?: string;
-    referenceImages?: string[];
-    referenceAssets?: SeedanceReferenceAsset[];
-    traceId?: string;
-    taskId?: string;
-    sceneId?: string;
-  }) {
+  private yikeConfigured() {
+    return Boolean(this.yikeAccessKeyId && this.yikeAccessKeySecret && this.yikeModel);
+  }
+
+  private yikeProviderTaskId(jobId: string) {
+    return `${this.yikeTaskPrefix}${jobId}`;
+  }
+
+  private yikeJobId(providerTaskId: string) {
+    return providerTaskId.startsWith(this.yikeTaskPrefix)
+      ? providerTaskId.slice(this.yikeTaskPrefix.length)
+      : providerTaskId;
+  }
+
+  private yikeEndpointHost() {
+    if (this.yikeEndpoint) return this.yikeEndpoint;
+    return this.yikeRegionId === 'ap-southeast-1'
+      ? 'yike.ap-southeast-1.aliyuncs.com'
+      : 'yike.cn-shanghai.aliyuncs.com';
+  }
+
+  private yikeStatus(status: string) {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (['created', 'queuing'].includes(normalized)) return 'queued';
+    if (normalized === 'executing') return 'running';
+    if (normalized === 'finished') return 'success';
+    if (normalized === 'failed') return 'failed';
+    return normalized;
+  }
+
+  private parseMaybeJson(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const text = value.trim();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { rawText: value };
+    }
+  }
+
+  private plainObject(value: unknown) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return value;
+    }
+  }
+
+  private yikeVideoUrl(data: any) {
+    const job = data?.body?.videoGenerationJob || data?.videoGenerationJob || data?.VideoGenerationJob || {};
+    const output = this.parseMaybeJson(job?.output || job?.Output || data?.body?.output || data?.Output) as any;
+    const medias = Array.isArray(output?.Medias) ? output.Medias : Array.isArray(output?.medias) ? output.medias : [];
+    const direct = medias
+      .map((item: any) => item?.OutputUrl || item?.outputUrl || item?.Url || item?.url)
+      .map(String)
+      .find((url: string) => /^https?:\/\//.test(url) && /\.(mp4|mov)(\?|$)/i.test(url));
+    return direct || this.videoUrl(data);
+  }
+
+  private yikeErrorMessage(data: any, fallback: string) {
+    const job = data?.body?.videoGenerationJob || data?.videoGenerationJob || data?.VideoGenerationJob || {};
+    return String(job?.errorMessage || job?.ErrorMessage || data?.body?.message || data?.message || data?.Message || fallback);
+  }
+
+  private yikeErrorDetails(error: unknown) {
+    const item = error as {
+      code?: string;
+      name?: string;
+      message?: string;
+      statusCode?: number;
+      data?: unknown;
+      description?: string;
+    };
+    return {
+      code: item?.code || item?.name || '',
+      statusCode: item?.statusCode || 0,
+      message: item?.message || item?.description || String(error || ''),
+      data: item?.data,
+    };
+  }
+
+  private async createYikeClient() {
+    const mod: any = await import('@alicloud/yike20260707');
+    const Client = mod.default || mod.Client;
+    const client = new Client({
+      accessKeyId: this.yikeAccessKeyId,
+      accessKeySecret: this.yikeAccessKeySecret,
+      regionId: this.yikeRegionId,
+      endpoint: this.yikeEndpoint || undefined,
+    });
+    return {
+      client,
+      SubmitVideoGenerationJobRequest: mod.SubmitVideoGenerationJobRequest,
+      GetVideoGenerationJobRequest: mod.GetVideoGenerationJobRequest,
+    };
+  }
+
+  private yikeReferenceAssets(input: VideoCreateInput) {
+    const sourceAssets = Array.isArray(input.referenceAssets) && input.referenceAssets.length
+      ? input.referenceAssets
+      : (input.referenceImages || []).map((url, index) => ({
+          url,
+          token: `@图片${index + 1}`,
+          purpose: `第${index + 1}张参考图`,
+          category: 'generic' as const,
+        }));
+    const validUrls = new Set(this.validImageUrls(sourceAssets.map((asset) => asset.url), 9));
+    return sourceAssets
+      .filter((asset) => validUrls.has(String(asset.url || '').trim()))
+      .map((asset, index) => ({
+        url: String(asset.url).trim(),
+        token: String(asset.token || `@图片${index + 1}`),
+        purpose: String(asset.purpose || `第${index + 1}张参考图`),
+        category: asset.category || 'generic',
+      }));
+  }
+
+  private yikeBoundPrompt(input: VideoCreateInput, activeAssets: SeedanceReferenceAsset[]) {
+    const promptBody = input.promptBody || input.prompt;
+    if (!activeAssets.length) return promptBody;
+    let remapped = promptBody;
+    activeAssets.forEach((asset, index) => {
+      remapped = remapped.replaceAll(String(asset.token || `@图片${index + 1}`), `image ${index + 1}`);
+    });
+    const bindings = activeAssets
+      .map((asset, index) => `image ${index + 1}: ${asset.purpose || `reference image ${index + 1}`}`)
+      .join('\n');
+    return `Reference asset bindings:\n${bindings}\n\n${remapped}`;
+  }
+
+  private dashscopeHappyhorseConfigured() {
+    return Boolean(this.dashscopeApiKey && this.dashscopeBase && this.dashscopeTextModel && this.dashscopeReferenceModel);
+  }
+
+  private dashscopeVideoEndpoint() {
+    return `${this.dashscopeBase}/api/v1/services/aigc/video-generation/video-synthesis`;
+  }
+
+  private dashscopeTaskEndpoint(providerTaskId: string) {
+    return `${this.dashscopeBase}/api/v1/tasks/${encodeURIComponent(this.dashscopeTaskId(providerTaskId))}`;
+  }
+
+  private dashscopeProviderTaskId(taskId: string) {
+    return `${this.dashscopeTaskPrefix}${taskId}`;
+  }
+
+  private dashscopeTaskId(providerTaskId: string) {
+    return providerTaskId.startsWith(this.dashscopeTaskPrefix)
+      ? providerTaskId.slice(this.dashscopeTaskPrefix.length)
+      : providerTaskId;
+  }
+
+  private dashscopeStatus(status: string) {
+    const normalized = String(status || '').trim().toUpperCase();
+    if (normalized === 'PENDING') return 'queued';
+    if (normalized === 'RUNNING') return 'running';
+    if (normalized === 'SUCCEEDED') return 'success';
+    if (['FAILED', 'CANCELED', 'UNKNOWN'].includes(normalized)) return 'failed';
+    return normalized.toLowerCase();
+  }
+
+  private dashscopeVideoUrl(data: any) {
+    return String(
+      data?.output?.video_url
+      || data?.output?.video?.url
+      || data?.video_url
+      || data?.body?.output?.video_url
+      || '',
+    );
+  }
+
+  private dashscopeTaskError(data: any) {
+    return String(
+      data?.output?.message
+      || data?.message
+      || data?.Message
+      || data?.error?.message
+      || '',
+    );
+  }
+
+  private dashscopeReferenceAssets(input: VideoCreateInput) {
+    return this.yikeReferenceAssets(input);
+  }
+
+  private dashscopeBoundPrompt(input: VideoCreateInput, activeAssets: SeedanceReferenceAsset[]) {
+    const promptBody = input.promptBody || input.prompt;
+    if (!activeAssets.length) return promptBody;
+    let remapped = promptBody;
+    activeAssets.forEach((asset, index) => {
+      remapped = remapped.replaceAll(String(asset.token || `@图片${index + 1}`), `[Image ${index + 1}]`);
+    });
+    const bindings = activeAssets
+      .map((asset, index) => `[Image ${index + 1}]: ${asset.purpose || `reference image ${index + 1}`}`)
+      .join('\n');
+    return `Reference asset bindings:\n${bindings}\n\n${remapped}`;
+  }
+
+  private dashscopeRequestLog(input: VideoCreateInput, traceId: string, requestBody: Record<string, unknown>, inputMode: string) {
+    return {
+      provider: 'dashscope_happyhorse',
+      traceId,
+      taskId: input.taskId,
+      sceneId: input.sceneId,
+      endpoint: this.dashscopeVideoEndpoint(),
+      headers: {
+        Authorization: 'Bearer <redacted>',
+        'Content-Type': 'application/json',
+        'X-DashScope-Async': 'enable',
+      },
+      request: requestBody,
+      inputMode,
+    };
+  }
+
+  private async dashscopeJson(url: string, init: RequestInit) {
+    const response = await fetch(url, init);
+    const text = await response.text();
+    let data: any;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { rawText: text };
+    }
+    return { response, data };
+  }
+
+  private async createDashscopeHappyhorseVideo(input: VideoCreateInput) {
+    if (!this.dashscopeHappyhorseConfigured()) {
+      throw this.codedError('DASHSCOPE_HAPPYHORSE_NOT_CONFIGURED', '百炼 HappyHorse 视频接口尚未配置', 503);
+    }
+    const traceId = input.traceId || randomUUID();
+    const activeAssets = this.dashscopeReferenceAssets(input);
+    const inputMode = activeAssets.length ? 'reference_image' : 'text_only';
+    const requestBody = {
+      model: activeAssets.length ? this.dashscopeReferenceModel : this.dashscopeTextModel,
+      input: {
+        prompt: this.dashscopeBoundPrompt(input, activeAssets),
+        ...(activeAssets.length
+          ? { media: activeAssets.map((asset) => ({ type: 'reference_image', url: asset.url })) }
+          : {}),
+      },
+      parameters: {
+        resolution: process.env.DASHSCOPE_HAPPYHORSE_RESOLUTION || process.env.HAPPYHORSE_RESOLUTION || '720P',
+        ratio: process.env.DASHSCOPE_HAPPYHORSE_RATIO || process.env.HAPPYHORSE_RATIO || '9:16',
+        duration: Number(process.env.DASHSCOPE_HAPPYHORSE_DURATION || process.env.HAPPYHORSE_DURATION || 15),
+        watermark: false,
+      },
+    };
+    const requestLog = this.dashscopeRequestLog(input, traceId, requestBody, inputMode);
+    this.logger.log(JSON.stringify({
+      event: 'whatif.dashscope_happyhorse.request',
+      traceId,
+      taskId: input.taskId,
+      sceneId: input.sceneId,
+      endpoint: this.dashscopeVideoEndpoint(),
+      request: requestBody,
+    }));
+    const { response, data } = await this.dashscopeJson(this.dashscopeVideoEndpoint(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.dashscopeApiKey}`,
+        'Content-Type': 'application/json',
+        'X-DashScope-Async': 'enable',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    this.logger.log(JSON.stringify({
+      event: 'whatif.dashscope_happyhorse.response',
+      traceId,
+      taskId: input.taskId,
+      sceneId: input.sceneId,
+      httpStatus: response.status,
+      response: data,
+    }));
+    if (!response.ok) {
+      const error = this.codedError(
+        `DASHSCOPE_HAPPYHORSE_CREATE_HTTP_${response.status}`,
+        this.dashscopeTaskError(data) || `百炼 HappyHorse 创建任务失败：${response.status}`,
+        response.status >= 500 || response.status === 429 || response.status === 408 ? 502 : response.status,
+        data,
+      ) as CodedError & { requestLog?: unknown };
+      error.requestLog = requestLog;
+      throw error;
+    }
+    const taskId = String(data?.output?.task_id || data?.task_id || '');
+    if (!taskId) {
+      const error = this.codedError('DASHSCOPE_HAPPYHORSE_TASK_ID_MISSING', '百炼 HappyHorse 未返回任务 ID', 502, data) as CodedError & { requestLog?: unknown };
+      error.requestLog = requestLog;
+      throw error;
+    }
+    return {
+      providerTaskId: this.dashscopeProviderTaskId(taskId),
+      status: this.dashscopeStatus(data?.output?.task_status || 'PENDING'),
+      inputMode,
+      raw: data,
+      requestLog,
+    };
+  }
+
+  private async createYikeVideo(input: VideoCreateInput) {
+    if (!this.yikeConfigured()) {
+      throw this.codedError('YIKE_NOT_CONFIGURED', '阿里云一刻视频接口尚未配置', 503);
+    }
+    const traceId = input.traceId || randomUUID();
+    const activeAssets = this.yikeReferenceAssets(input);
+    const yikeInput = {
+      Prompt: this.yikeBoundPrompt(input, activeAssets),
+      ...(activeAssets.length
+        ? { Medias: activeAssets.map((asset) => ({ Type: 'image', Url: asset.url })) }
+        : {}),
+    };
+    const requestBody = {
+      model: this.yikeModel,
+      jobType: activeAssets.length ? 'reference_to_video' : 'text_to_video',
+      input: JSON.stringify(yikeInput),
+      resolution: process.env.YIKE_RESOLUTION || '720P',
+      aspectRatio: process.env.YIKE_ASPECT_RATIO || '9:16',
+      duration: process.env.YIKE_DURATION || '15',
+      n: Number(process.env.YIKE_OUTPUT_COUNT || 1),
+      scene: 'general',
+      clientToken: traceId.replaceAll('-', ''),
+      userData: JSON.stringify({ traceId, taskId: input.taskId, sceneId: input.sceneId, provider: 'yike' }),
+    };
+    const requestLog = {
+      provider: 'yike',
+      traceId,
+      taskId: input.taskId,
+      sceneId: input.sceneId,
+      endpoint: this.yikeEndpointHost(),
+      request: requestBody,
+      inputMode: activeAssets.length ? 'reference_image' : 'text_only',
+    };
+    try {
+      const { client, SubmitVideoGenerationJobRequest } = await this.createYikeClient();
+      this.logger.log(JSON.stringify({
+        event: 'whatif.yike.request',
+        traceId,
+        taskId: input.taskId,
+        sceneId: input.sceneId,
+        endpoint: this.yikeEndpointHost(),
+        request: requestBody,
+      }));
+      const response = await client.submitVideoGenerationJob(new SubmitVideoGenerationJobRequest(requestBody));
+      const raw: any = this.plainObject(response);
+      this.logger.log(JSON.stringify({
+        event: 'whatif.yike.response',
+        traceId,
+        taskId: input.taskId,
+        sceneId: input.sceneId,
+        response: raw,
+      }));
+      const jobId = String(raw?.body?.jobId || raw?.jobId || raw?.JobId || '');
+      if (!jobId) {
+        const error = this.codedError('YIKE_TASK_ID_MISSING', '阿里云一刻未返回任务 ID', 502, raw) as CodedError & { requestLog?: unknown };
+        error.requestLog = requestLog;
+        throw error;
+      }
+      return {
+        providerTaskId: this.yikeProviderTaskId(jobId),
+        status: 'queued',
+        inputMode: requestLog.inputMode,
+        raw,
+        requestLog,
+      };
+    } catch (error) {
+      if ((error as CodedError)?.code) throw error;
+      const details = this.yikeErrorDetails(error);
+      const exception = this.codedError(
+        details.statusCode ? `YIKE_CREATE_HTTP_${details.statusCode}` : 'YIKE_CREATE_ERROR',
+        details.message || '阿里云一刻创建任务失败',
+        details.statusCode && details.statusCode < 500 ? details.statusCode : 502,
+        details,
+      ) as CodedError & { requestLog?: unknown };
+      exception.requestLog = requestLog;
+      throw exception;
+    }
+  }
+
+  async createVideo(input: VideoCreateInput) {
+    const provider = this.resolveVideoProvider(input.videoProvider || this.videoProvider);
+    if (provider === 'yike') return this.createYikeVideo(input);
+    if (provider === 'dashscope_happyhorse') return this.createDashscopeHappyhorseVideo(input);
+    return this.createSeedanceVideo(input);
+  }
+
+  private async createSeedanceVideo(input: VideoCreateInput) {
     if (!this.seedanceKey || !this.seedanceModel) {
       throw this.codedError('SEEDANCE_NOT_CONFIGURED', 'Seedance 2.0 尚未配置', 503);
     }
@@ -1036,6 +1480,12 @@ export class WhatifAiService {
   }
 
   async getVideoStatus(providerTaskId: string) {
+    if (providerTaskId.startsWith(this.dashscopeTaskPrefix)) return this.getDashscopeHappyhorseVideoStatus(providerTaskId);
+    if (providerTaskId.startsWith(this.yikeTaskPrefix)) return this.getYikeVideoStatus(providerTaskId);
+    return this.getSeedanceVideoStatus(providerTaskId);
+  }
+
+  private async getSeedanceVideoStatus(providerTaskId: string) {
     const response = await fetch(
       `${this.seedanceBase}/contents/generations/tasks/${encodeURIComponent(providerTaskId)}`,
       { headers: this.seedanceHeaders() },
@@ -1053,6 +1503,62 @@ export class WhatifAiService {
       status: this.taskStatus(data) || 'running',
       ...this.videoMedia(data),
       error: this.taskError(data),
+      raw: data,
+    };
+  }
+
+  private async getYikeVideoStatus(providerTaskId: string) {
+    const jobId = this.yikeJobId(providerTaskId);
+    if (!this.yikeConfigured()) {
+      throw this.codedError('YIKE_NOT_CONFIGURED', '阿里云一刻视频接口尚未配置', 503);
+    }
+    try {
+      const { client, GetVideoGenerationJobRequest } = await this.createYikeClient();
+      const response = await client.getVideoGenerationJob(new GetVideoGenerationJobRequest({ jobId }));
+      const raw: any = this.plainObject(response);
+      const job = raw?.body?.videoGenerationJob || raw?.videoGenerationJob || raw?.VideoGenerationJob || {};
+      return {
+        status: this.yikeStatus(job?.status || job?.Status || raw?.body?.status || raw?.Status || ''),
+        videoUrl: this.yikeVideoUrl(raw),
+        firstFrameUrl: '',
+        lastFrameUrl: '',
+        error: this.yikeErrorMessage(raw, ''),
+        raw,
+      };
+    } catch (error) {
+      if ((error as CodedError)?.code) throw error;
+      const details = this.yikeErrorDetails(error);
+      throw this.codedError(
+        details.statusCode ? `YIKE_STATUS_HTTP_${details.statusCode}` : 'YIKE_STATUS_ERROR',
+        details.message || '阿里云一刻查询任务失败',
+        details.statusCode && details.statusCode < 500 ? details.statusCode : 502,
+        details,
+      );
+    }
+  }
+
+  private async getDashscopeHappyhorseVideoStatus(providerTaskId: string) {
+    if (!this.dashscopeHappyhorseConfigured()) {
+      throw this.codedError('DASHSCOPE_HAPPYHORSE_NOT_CONFIGURED', '百炼 HappyHorse 视频接口尚未配置', 503);
+    }
+    const { response, data } = await this.dashscopeJson(this.dashscopeTaskEndpoint(providerTaskId), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${this.dashscopeApiKey}` },
+    });
+    if (!response.ok) {
+      throw this.codedError(
+        `DASHSCOPE_HAPPYHORSE_STATUS_HTTP_${response.status}`,
+        this.dashscopeTaskError(data) || `百炼 HappyHorse 查询任务失败：${response.status}`,
+        response.status >= 500 || response.status === 429 || response.status === 408 ? 502 : response.status,
+        data,
+      );
+    }
+    return {
+      status: this.dashscopeStatus(data?.output?.task_status || ''),
+      videoUrl: this.dashscopeVideoUrl(data),
+      firstFrameUrl: '',
+      lastFrameUrl: '',
+      error: this.dashscopeTaskError(data),
       raw: data,
     };
   }

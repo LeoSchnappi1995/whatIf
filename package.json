@@ -36,6 +36,7 @@
     "dev:local": "node ./scripts/dev-local.js"
   },
   "dependencies": {
+    "@alicloud/yike20260707": "^2.1.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@lark-apaas/fullstack-nestjs-core": "^1.1.56",
     "@nestjs/axios": "^4.0.1",
