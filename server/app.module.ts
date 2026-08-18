@@ -5,6 +5,7 @@ import { MongoModule } from './mongo/mongo.module';
 import { AuthModule } from './auth/auth.module';
 import { AuthMiddleware } from './auth/auth.middleware';
 import { FilesModule } from './files/files.module';
+import { WhatifModule } from './modules/whatif/whatif.module';
 import { ViewModule } from './modules/view/view.module';
 
 @Module({
@@ -13,8 +14,7 @@ import { ViewModule } from './modules/view/view.module';
     MongoModule,
     AuthModule,
     FilesModule,
-    // @route-section: business-modules START（whatif 模块迁移中，下一阶段挂回）
-    // @route-section: business-modules END
+    WhatifModule,
     ViewModule,
   ],
 })

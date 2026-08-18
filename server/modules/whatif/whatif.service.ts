@@ -1,11 +1,9 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import {
-  DRIZZLE_DATABASE,
-  FileService,
-  type PostgresJsDatabase,
-} from '@lark-apaas/fullstack-nestjs-core';
+import type { Collection } from 'mongodb';
 import * as ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { MONGO, type WhatifMongo } from '../../mongo/mongo.module';
+import { CompatDb, and, desc, eq, inArray, ne } from '../../mongo/db';
+import { FilesService } from '../../files/files.service';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -213,12 +211,30 @@ export class WhatifService {
   private readonly logger = new Logger(WhatifService.name);
   private readonly bundledModelReferenceCache = new Map<string, Promise<string>>();
 
+  private readonly db: CompatDb;
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly files: FileService,
+    @Inject(MONGO) private readonly mongo: WhatifMongo,
+    private readonly files: FilesService,
     private readonly ai: WhatifAiService,
     private readonly voices: WhatifVoiceService,
-  ) {}
+  ) {
+    const colls: Record<string, Collection> = {
+      whatif_characters: mongo.characters,
+      whatif_character_assets: mongo.characterAssets,
+      whatif_worldviews: mongo.worldviews,
+      whatif_story_drafts: mongo.storyDrafts,
+      whatif_draft_characters: mongo.draftCharacters,
+      whatif_stories: mongo.stories,
+      whatif_story_branches: mongo.storyBranches,
+      whatif_scenes: mongo.scenes,
+      whatif_video_tasks: mongo.videoTasks,
+      whatif_invitations: mongo.invitations,
+      whatif_authorization_snapshots: mongo.authorizationSnapshots,
+      whatif_publications: mongo.publications,
+      whatif_idempotency_records: mongo.idempotencyRecords,
+    };
+    this.db = new CompatDb(colls);
+  }
 
   private id(prefix: string) {
     return `${prefix}_${randomUUID()}`;
