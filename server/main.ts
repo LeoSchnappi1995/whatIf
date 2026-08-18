@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { join } from 'node:path';
@@ -13,6 +14,8 @@ async function bootstrap() {
     abortOnError: process.env.NODE_ENV !== 'development',
   });
   app.enableCors({ origin: true, credentials: true });
+  // 前端构建产物静态服务（dist/client：/assets 等）
+  app.useStaticAssets(join(process.cwd(), 'dist/client'));
   // 上传文件静态服务
   app.use('/uploads', express.static(FilesService.uploadDir()));
 

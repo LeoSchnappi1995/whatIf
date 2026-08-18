@@ -20,16 +20,15 @@ export interface WhatifMongo {
   idempotencyRecords: Collection;
 }
 
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017';
-const BIZ_DB = process.env.MONGO_DB || 'whatif';
-const USERS_DB = process.env.USERS_DB || 'ai_jizhang';
-
 @Global()
 @Module({
   providers: [
     {
       provide: MONGO,
       useFactory: async (): Promise<WhatifMongo> => {
+        const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017';
+        const BIZ_DB = process.env.MONGO_DB || 'whatif';
+        const USERS_DB = process.env.USERS_DB || 'ai_jizhang';
         const client = new MongoClient(MONGO_URL);
         await client.connect();
         const biz = client.db(BIZ_DB);

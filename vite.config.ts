@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   root: path.resolve(__dirname, 'client'),
+  base: process.env.BASE_PATH || '/whatif/',
   plugins: [react()],
   resolve: {
     alias: {
