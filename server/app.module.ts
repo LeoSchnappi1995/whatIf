@@ -1,28 +1,25 @@
-import { APP_FILTER } from '@nestjs/core';
-import { Module } from '@nestjs/common';
-import { PlatformModule } from '@lark-apaas/fullstack-nestjs-core';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 
-import { GlobalExceptionFilter } from './common/filters/exception.filter';
+import { MongoModule } from './mongo/mongo.module';
+import { AuthModule } from './auth/auth.module';
+import { AuthMiddleware } from './auth/auth.middleware';
+import { FilesModule } from './files/files.module';
 import { ViewModule } from './modules/view/view.module';
-import { WhatifModule } from './modules/whatif/whatif.module';
 
 @Module({
   imports: [
-    // 平台 Module，提供平台能力
-    PlatformModule.forRoot(),
-    // ====== @route-section: business-modules START ======
-    WhatifModule,
-    // ====== @route-section: business-modules END ======
-
-    // ⚠️ @route-order: last
-    // ViewModule is the fallback route module, must be registered last.
+    ConfigModule.forRoot({ isGlobal: true }),
+    MongoModule,
+    AuthModule,
+    FilesModule,
+    // @route-section: business-modules START（whatif 模块迁移中，下一阶段挂回）
+    // @route-section: business-modules END
     ViewModule,
   ],
-  providers: [
-    {
-      provide: APP_FILTER,
-      useClass: GlobalExceptionFilter,
-    },
-  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuthMiddleware).forRoutes('*');
+  }
+}
