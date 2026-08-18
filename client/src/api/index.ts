@@ -1,5 +1,12 @@
-import { logger } from '@lark-apaas/client-toolkit/logger';
-import { axiosForBackend } from '@lark-apaas/client-toolkit/utils/getAxiosForBackend';
+import axios from 'axios';
+
+const logger = { error: (...a: unknown[]) => console.error(...a), info: (...a: unknown[]) => console.log(...a) };
+
+/** 请求封装：baseURL 取部署子路径（window.BASE_PATH） */
+function axiosForBackend(cfg: Record<string, unknown>): Promise<{ data: unknown }> {
+  const baseURL = typeof window !== 'undefined' ? (window as any).BASE_PATH || '/' : '/';
+  return axios.request({ baseURL, ...cfg });
+}
 
 import type {
   CreateStoryDraftResponse,
