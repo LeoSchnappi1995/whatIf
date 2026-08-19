@@ -9,6 +9,7 @@
   <script>
     try {
       window.__platform__ = JSON.parse('{{{__platform__}}}');
+      window.BASE_PATH = '{{{BASE_PATH}}}';
     } catch (e) {
       console.error('Failed to parse __platform__', e);
     }

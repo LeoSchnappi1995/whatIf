@@ -14,8 +14,9 @@ async function bootstrap() {
     abortOnError: process.env.NODE_ENV !== 'development',
   });
   app.enableCors({ origin: true, credentials: true });
-  // 前端构建产物静态服务（dist/client：/assets 等）
-  app.useStaticAssets(join(process.cwd(), 'dist/client'));
+  // 前端构建产物静态服务：只服务 /assets 和 favicon（index.html 走 hbs 渲染以注入 BASE_PATH）
+  app.use('/assets', express.static(join(process.cwd(), 'dist/client/assets')));
+  app.use('/favicon.svg', express.static(join(process.cwd(), 'dist/client/favicon.svg')));
   // 上传文件静态服务
   app.use('/uploads', express.static(FilesService.uploadDir()));
 
